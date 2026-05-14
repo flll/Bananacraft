@@ -379,13 +379,17 @@ elif st.session_state.phase == 1:
                 if st.button("✅ コンセプト承認 -> 区画整理へ"):
                     with st.spinner("Generating Zoning Data..."):
                         try:
+                            ctx_parts = []
                             c = st.session_state.concept or {}
-                            ctx_parts = [
-                                str(c.get("description") or "").strip(),
-                                str(c.get("refined_prompt") or "").strip(),
-                                str(c.get("title") or "").strip(),
-                            ]
-                            concept_ctx = "\n\n".join(x for x in ctx_parts if x)
+                            if c.get("description"):
+                                ctx_parts.append("【コンセプト思考】\n" + str(c["description"]))
+                            if c.get("refined_prompt"):
+                                ctx_parts.append("【画像生成プロンプト】\n" + str(c["refined_prompt"]))
+                            if fm.exists("concept_input.txt"):
+                                cin = fm.load_text("concept_input.txt")
+                                if cin:
+                                    ctx_parts.append("【ユーザー初期入力】\n" + cin)
+                            concept_ctx = "\n\n".join(ctx_parts)
                             zoning_data = client.generate_zoning_json(concept_ctx)
                             # The client now returns parsed object or list
                             # Apply Fixes (Collision Resolution & Orientation)

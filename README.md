@@ -11,6 +11,27 @@ This is the deployment version of Bananacraft, stripped of legacy code and optim
 - **ブラウザ永続化**: Streamlit サイドバーから `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` を入力し、「ブラウザに保存」で **localStorage** に JSON 保存できます（依存: `streamlit-js-eval`）。**XSS があるページではキーが窃取されうる**ため、信頼できる環境でのみ利用し、本番ではサーバ側シークレットやプロキシ方式を推奨します。
 - **Function Calling のベンチマーク例**: [Berkeley Function Calling Leaderboard](https://gorilla.cs.berkeley.edu/leaderboard.html) をモデル選定の参考にし、リリース周期で `routing.py` の ID を見直してください。
 
+## Docker Compose（localhost / サーバ共通）
+
+リポジトリルートで次を実行します（初回はビルドに数分かかることがあります）。
+
+```bash
+cp .env.example .env   # 未作成の場合
+# .env に GEMINI_API_KEY および RCON_* を設定
+
+docker compose up --build -d
+```
+
+- **UI**: [http://localhost:8501](http://localhost:8501)
+- **プロジェクトデータ**: ホストの `./projects` がコンテナの `/app/projects` にマウントされます。
+- **ホスト上の Minecraft（RCON）**へ接続する場合は `.env` で `RCON_HOST=host.docker.internal` を推奨します（`docker-compose.yml` で Linux 向け `extra_hosts` を設定済みです）。
+
+停止・削除:
+
+```bash
+docker compose down
+```
+
 ## 📦 Contents
 - **app/**: Streamlit Application (v2)
 - **AI_Carpenter_Bot/**: Node.js Mineflayer Bot
