@@ -12,15 +12,13 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 
 try:
-    from google.genai import types
-    HAS_GENAI = True
+    from ai.providers.stage_client import ToolCallResult, complete_json, complete_with_tools
+    from ai.routing import AIStage
+    from ai.key_store import apply_context
 except ImportError:
-    HAS_GENAI = False
-
-try:
-    from ai.routing import AIStage, client_for_stage, text_model
-except ImportError:
-    from app.ai.routing import AIStage, client_for_stage, text_model
+    from app.ai.providers.stage_client import ToolCallResult, complete_json, complete_with_tools
+    from app.ai.routing import AIStage
+    from app.ai.key_store import apply_context
 
 
 @dataclass
@@ -327,15 +325,13 @@ class Architect:
     """
     
     def __init__(self, api_key: Optional[str] = None, debug: bool = False):
-        if not HAS_GENAI:
-            raise ImportError("google-genai package required")
-
+        if api_key:
+            apply_context({"GEMINI_API_KEY": api_key})
         self.debug = debug
-        self._key_override = api_key
-        self._cli_vision = client_for_stage(AIStage.ARCHITECT_VISION, api_key)
-        self._cli_build = client_for_stage(AIStage.ARCHITECT_BUILD, api_key)
-        self.model_vision = text_model(AIStage.ARCHITECT_VISION)
-        self.model_build = text_model(AIStage.ARCHITECT_BUILD)
+
+    @staticmethod
+    def _tool_results_to_instructions(results: List[ToolCallResult]) -> List[BuildingInstruction]:
+        return [BuildingInstruction(tool_name=r.name, parameters=r.arguments) for r in results]
     
     def analyze_structure(self, image_path: str, building_info: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -376,31 +372,22 @@ BUILDING AREA: {width} x {depth} blocks
 Be precise about positions. Identify ALL visible components including walls, floors, roofs, pillars."""
 
         user_prompt = "Analyze this building image and describe its structure as JSON."
-        
-        contents = [
-            types.Part.from_bytes(data=image_data, mime_type=self._get_mime_type(image_path)),
-            user_prompt
-        ]
-        
-        response = self._cli_vision.models.generate_content(
-            model=self.model_vision,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=0.3,  # Lower for more precise analysis
-            )
+
+        text = complete_json(
+            AIStage.ARCHITECT_VISION,
+            system=system_prompt,
+            user=user_prompt,
+            temperature=0.3,
+            image_bytes=image_data,
+            image_mime=self._get_mime_type(image_path),
         )
-        
-        # Extract JSON from response
-        text = response.text
         try:
-            # Try to parse as JSON
             if "```json" in text:
                 text = text.split("```json")[1].split("```")[0]
             elif "```" in text:
                 text = text.split("```")[1].split("```")[0]
             return json.loads(text.strip())
-        except:
+        except Exception:
             return {"raw_analysis": text, "error": "Could not parse as JSON"}
     
     def generate_from_structure(self, 
@@ -477,28 +464,15 @@ Create EVERY component:
 - Door with porch (on {facing} side)
 - Decorations (lanterns, fences, etc.)"""
 
-        tool_config = types.Tool(
-            function_declarations=[
-                types.FunctionDeclaration(
-                    name=tool["name"],
-                    description=tool["description"],
-                    parameters=tool["parameters"]
-                )
-                for tool in TOOL_DECLARATIONS
-            ]
+        results = complete_with_tools(
+            AIStage.ARCHITECT_BUILD,
+            system=system_prompt,
+            user_text=user_prompt,
+            declarations=TOOL_DECLARATIONS,
+            image_bytes=None,
+            temperature=0.5,
         )
-        
-        response = self._cli_build.models.generate_content(
-            model=self.model_build,
-            contents=user_prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                tools=[tool_config],
-                temperature=0.5,
-            )
-        )
-        
-        return self._parse_response(response)
+        return self._tool_results_to_instructions(results)
     
     def analyze_and_plan(self, 
                          image_path: str,
@@ -592,21 +566,14 @@ Count and position each window and door precisely!"""
         debug_info["stage1_system_prompt"] = stage1_system
         debug_info["stage1_user_prompt"] = stage1_user
         
-        contents = [
-            types.Part.from_bytes(data=image_data, mime_type=self._get_mime_type(image_path)),
-            stage1_user
-        ]
-        
-        response1 = self._cli_vision.models.generate_content(
-            model=self.model_vision,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=stage1_system,
-                temperature=0.3,
-            )
+        stage1_response_text = complete_json(
+            AIStage.ARCHITECT_VISION,
+            system=stage1_system,
+            user=stage1_user,
+            temperature=0.3,
+            image_bytes=image_data,
+            image_mime=self._get_mime_type(image_path),
         )
-        
-        stage1_response_text = response1.text
         debug_info["stage1_response"] = stage1_response_text
         
         # Parse structure
@@ -617,7 +584,7 @@ Count and position each window and door precisely!"""
             elif "```" in text:
                 text = text.split("```")[1].split("```")[0]
             structure = json.loads(text.strip())
-        except:
+        except Exception:
             structure = {"raw_analysis": stage1_response_text, "error": "Could not parse as JSON"}
         
         if "error" in structure:
@@ -693,49 +660,18 @@ Create EVERY component:
         debug_info["stage2_system_prompt"] = stage2_system
         debug_info["stage2_user_prompt"] = stage2_user
         
-        tool_config = types.Tool(
-            function_declarations=[
-                types.FunctionDeclaration(
-                    name=tool["name"],
-                    description=tool["description"],
-                    parameters=tool["parameters"]
-                )
-                for tool in TOOL_DECLARATIONS
-            ]
+        tool_results = complete_with_tools(
+            AIStage.ARCHITECT_BUILD,
+            system=stage2_system,
+            user_text=stage2_user,
+            declarations=TOOL_DECLARATIONS,
+            image_bytes=None,
+            temperature=0.5,
         )
-        
-        response2 = self._cli_build.models.generate_content(
-            model=self.model_build,
-            contents=stage2_user,
-            config=types.GenerateContentConfig(
-                system_instruction=stage2_system,
-                tools=[tool_config],
-                temperature=0.5,
-            )
-        )
-        
-        # Parse function calls
-        instructions = []
-        function_calls_debug = []
-        
-        for candidate in response2.candidates:
-            if not candidate.content or not candidate.content.parts:
-                continue
-            
-            for part in candidate.content.parts:
-                if hasattr(part, 'function_call') and part.function_call:
-                    fc = part.function_call
-                    params = dict(fc.args) if fc.args else {}
-                    instructions.append(BuildingInstruction(
-                        tool_name=fc.name,
-                        parameters=params
-                    ))
-                    function_calls_debug.append({
-                        "tool": fc.name,
-                        "parameters": params
-                    })
-        
-        debug_info["stage2_function_calls"] = function_calls_debug
+        instructions = self._tool_results_to_instructions(tool_results)
+        debug_info["stage2_function_calls"] = [
+            {"tool": i.tool_name, "parameters": i.parameters} for i in instructions
+        ]
         
         return instructions, debug_info
     
@@ -764,52 +700,17 @@ Generate ALL tool calls to faithfully recreate the structure."""
 
         user_prompt = f"Recreate this building. Area: {width}x{depth} blocks."
         
-        contents = [
-            types.Part.from_bytes(data=image_data, mime_type=self._get_mime_type(image_path)),
-            user_prompt
-        ]
-        
-        tool_config = types.Tool(
-            function_declarations=[
-                types.FunctionDeclaration(
-                    name=tool["name"],
-                    description=tool["description"],
-                    parameters=tool["parameters"]
-                )
-                for tool in TOOL_DECLARATIONS
-            ]
+        results = complete_with_tools(
+            AIStage.ARCHITECT_BUILD,
+            system=system_prompt,
+            user_text=user_prompt,
+            declarations=TOOL_DECLARATIONS,
+            image_bytes=image_data,
+            image_mime=self._get_mime_type(image_path),
+            temperature=0.7,
         )
         
-        response = self._cli_vision.models.generate_content(
-            model=self.model_vision,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                tools=[tool_config],
-                temperature=0.7,
-            )
-        )
-        
-        return self._parse_response(response)
-    
-    def _parse_response(self, response) -> List[BuildingInstruction]:
-        """Parse function calls from response."""
-        instructions = []
-        
-        for candidate in response.candidates:
-            if not candidate.content or not candidate.content.parts:
-                continue
-            
-            for part in candidate.content.parts:
-                if hasattr(part, 'function_call') and part.function_call:
-                    fc = part.function_call
-                    params = dict(fc.args) if fc.args else {}
-                    instructions.append(BuildingInstruction(
-                        tool_name=fc.name,
-                        parameters=params
-                    ))
-        
-        return instructions
+        return self._tool_results_to_instructions(results)
     
     def _get_mime_type(self, path: str) -> str:
         ext = os.path.splitext(path)[1].lower()
@@ -827,25 +728,13 @@ Tools: draw_plane (surfaces), place_smart_pillar (columns), draw_curve_loft (arc
 
         user_prompt = f"Build: {description}"
         
-        tool_config = types.Tool(
-            function_declarations=[
-                types.FunctionDeclaration(
-                    name=tool["name"],
-                    description=tool["description"],
-                    parameters=tool["parameters"]
-                )
-                for tool in TOOL_DECLARATIONS
-            ]
+        results = complete_with_tools(
+            AIStage.ARCHITECT_BUILD,
+            system=system_prompt,
+            user_text=user_prompt,
+            declarations=TOOL_DECLARATIONS,
+            image_bytes=None,
+            temperature=0.7,
         )
         
-        response = self._cli_build.models.generate_content(
-            model=self.model_build,
-            contents=user_prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                tools=[tool_config],
-                temperature=0.7,
-            )
-        )
-        
-        return self._parse_response(response)
+        return self._tool_results_to_instructions(results)

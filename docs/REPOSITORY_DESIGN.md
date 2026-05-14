@@ -33,7 +33,7 @@
 | 要素 | 技術・実装の所在 |
 |------|------------------|
 | フロント／オーケストレーション | Streamlit — [app/main.py](../app/main.py) のみ |
-| LLM・画像生成 | Google Gen AI — [app/api_client.py](../app/api_client.py)、建築・インフラは [app/v2/architect.py](../app/v2/architect.py)、[app/v2/city_planner.py](../app/v2/city_planner.py)、[app/v2/decorator.py](../app/v2/decorator.py) |
+| LLM・画像生成 | **工程別ルーティング** — [app/ai/routing.py](../app/ai/routing.py)、[app/ai/key_store.py](../app/ai/key_store.py)、[app/ai/providers/stage_client.py](../app/ai/providers/stage_client.py)。既定は OpenAI（区画・建築 FC 等）・Anthropic（コンセプト・装飾）・Google（画像）。キー不足時は Gemini にフォールバック。UI からのキーは [app/ai/browser_keys.py](../app/ai/browser_keys.py) で localStorage と同期。 |
 | 設計図 → ボクセル | [app/v2/carpenter.py](../app/v2/carpenter.py) + [app/v2/tools/](../app/v2/tools/) |
 | 即時ワールド反映 | Minecraft RCON — [app/rcon_client.py](../app/rcon_client.py) |
 | 逐次設置（演出） | Mineflayer — [AI_Carpenter_Bot/index.js](../AI_Carpenter_Bot/index.js) |
@@ -71,7 +71,7 @@ flowchart TB
 | Phase | 画面の主旨 | 主に触るコード | 備考 |
 |-------|------------|----------------|------|
 | **0** | 新規プロジェクト作成、API キー確認 | [app/main.py](../app/main.py) 冒頭〜 `phase == 0` | `FileManager`、`GeminiClient`、`Architect` を初期化。既存 `concept_*` / `zoning_*` があれば復元して **1 へ** |
-| **1** | コンセプトアート、ゾーニング、インフラ、テラフォーム | `phase == 1` | `GeminiClient` のチャット／画像、区画は `ZONING_PLAN` 工程の単発生成、`CityPlanner`、`zoning_fixer` 経由の調整、任意で `Terraformer` |
+| **1** | コンセプトアート、ゾーニング、インフラ、テラフォーム | `phase == 1` | `GeminiClient` のチャット／画像、`CityPlanner`、`zoning_fixer` 経由の調整、任意で `Terraformer` |
 | **2** | 区画（ゾーン）を 1 つ選び、外観画像 → 設計図（JSON）→ ブロック列 | `phase == 2` | `selected_zone`、`Architect.analyze_structure` / `generate_from_structure`、`CarpenterSession`、`BlueprintAnalyzer`（プレビュー）、3D は [app/v2/preview.py](../app/v2/preview.py) |
 | **3** | 構造物の RCON 一括建築、クリア、装飾プラン生成、Mineflayer 実行 | `phase == 3` | `RconClient.build_voxels`、`Decorator`、`CarpenterSession.run_bot` |
 
@@ -84,7 +84,11 @@ flowchart TB
 | パス | 役割 |
 |------|------|
 | [app/main.py](../app/main.py) | UI・Phase 分岐・成果物の読み書きの集約点 |
-| [app/api_client.py](../app/api_client.py) | コンセプト用チャット、テキスト／画像生成。`TEXT_MODEL` / `IMAGE_MODEL` 等の定数 |
+| [app/api_client.py](../app/api_client.py) | コンセプト用チャット／画像／区画 JSON。内部で `ai.routing` の工程に応じたプロバイダを利用 |
+| [app/ai/routing.py](../app/ai/routing.py) | `AIStage` ごとのプロバイダ（Google / OpenAI / Anthropic）とモデル ID の固定割当 |
+| [app/ai/key_store.py](../app/ai/key_store.py) | ランタイム上の API キー辞書（Streamlit session / localStorage 由来が `.env` より優先） |
+| [app/ai/browser_keys.py](../app/ai/browser_keys.py) | `streamlit-js-eval` 経由で localStorage 読み書き |
+| [app/ai/providers/stage_client.py](../app/ai/providers/stage_client.py) | `complete_json` / `complete_text` / `complete_with_tools` / `generate_image_bytes` の実装 |
 | [app/rcon_client.py](../app/rcon_client.py) | `SimpleRcon`（プロトコル）、`RconClient`（`fill` / `setblock` バッチ、`build_voxels`） |
 | [app/file_manager.py](../app/file_manager.py) | `projects/<name>/` への JSON・テキスト・画像の保存読込 |
 | [app/v2/architect.py](../app/v2/architect.py) | 建築用 Function Calling スキーマ `TOOL_DECLARATIONS`、2 段階解析、`BuildingInstruction` |
@@ -96,7 +100,6 @@ flowchart TB
 | [app/v2/zoning_fixer.py](../app/v2/zoning_fixer.py) | 区画 JSON の衝突検出・修正 |
 | [app/v2/layout_engine.py](../app/v2/layout_engine.py) | レイアウト計算（ゾーン座標などと連携） |
 | [app/v2/geometry/](../app/v2/geometry/) | ベジェ、階段、ボクセル化など幾何サブルーチン |
-| [app/ai/routing.py](../app/ai/routing.py) | **工程別の固定モデル・API キー環境変数**（Gemini 前提。`ROUTES` / `client_for_stage`） |
 | [AI_Carpenter_Bot/](../AI_Carpenter_Bot/) | Mineflayer クライアント、`package.json` で依存管理 |
 | [deployment/](../deployment/) | systemd ユニット例 |
 | [setup.sh](../setup.sh) | 環境セットアップ |
@@ -166,7 +169,7 @@ flowchart TB
 ### 6.4 Decorator と BlueprintAnalyzer
 
 - [app/v2/blueprint_analyzer.py](../app/v2/blueprint_analyzer.py): `draw_plane` / `place_window` / `place_door` 等から要素 ID・向き・範囲を構築。
-- [app/v2/decorator.py](../app/v2/decorator.py): 完成イメージ画像＋コンセプト＋構造指示から装飾用の Function Calling を生成。キー／モデルは [app/ai/routing.py](../app/ai/routing.py) の `DECORATION` 工程にバインド。
+- [app/v2/decorator.py](../app/v2/decorator.py): 完成イメージ画像＋コンセプト＋構造指示から装飾用の Function Calling を生成。API キーは `GEMINI_API_KEY`。
 
 ---
 
@@ -182,32 +185,35 @@ flowchart TB
 
 ## 8. 環境変数
 
+### 8.1 API キーの解決順（重要）
+
+1. **Streamlit セッション**（サイドバー入力で更新される `api_key_context`）  
+2. **ブラウザ localStorage**（初回ロード時に `streamlit-js-eval` で読み込み、任意で「ブラウザに保存」）  
+3. **OS 環境変数**（`.env` / systemd の `EnvironmentFile`）
+
+`localStorage` に保存したキーは **同一オリジン上で悪意のあるスクリプト（XSS）が実行されると読み取られる**可能性があります。本番ではサーバ側シークレット管理や、バックエンドプロキシ経由でのみ LLM を呼ぶ構成を推奨します。CSP（Content-Security-Policy）の強化や、信頼できない `components` の禁止も有効です。
+
+### 8.2 変数一覧
+
 | 変数 | 用途 |
 |------|------|
-| `GEMINI_API_KEY` | **全工程のフォールバック**用。工程別キーが未設定のときに使用 |
-| `GEMINI_API_KEY_CONCEPT` | コンセプト対話・プロンプト推敲（[`api_client`](../app/api_client.py) のチャット） |
-| `GEMINI_API_KEY_IMAGE` | コンセプト／設計画像生成（`IMAGE_RENDER`） |
-| `GEMINI_API_KEY_ZONING` | 区画 JSON 単発生成（チャット履歴に依存しない） |
-| `GEMINI_API_KEY_ARCHITECT_VISION` | 建築 Stage1（画像→構造記述） |
-| `GEMINI_API_KEY_ARCHITECT_BUILD` | 建築 Stage2（構造→Function Calling） |
-| `GEMINI_API_KEY_INFRA` | インフラ FC（[`city_planner`](../app/v2/city_planner.py)） |
-| `GEMINI_API_KEY_DECORATOR` | 装飾 FC（[`decorator`](../app/v2/decorator.py)） |
+| `GEMINI_API_KEY` | 画像生成（必須寄り）および OpenAI/Anthropic 未設定時の **全工程フォールバック** |
+| `GEMINI_API_KEY_IMAGE` | 画像工程専用（未設定時は `GEMINI_API_KEY`） |
+| `OPENAI_API_KEY` / `OPENAI_API_KEY_ZONING` / `OPENAI_API_KEY_ARCHITECT_*` / `OPENAI_API_KEY_INFRA` | 区画 JSON・躯体画像解析・建築 FC・インフラ FC（未設定時は Gemini に切替） |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY_CONCEPT` / `ANTHROPIC_API_KEY_DECORATOR` | コンセプト対話・装飾 FC（未設定時は Gemini） |
 | `RCON_HOST` | 既定 `localhost` — [app/rcon_client.py](../app/rcon_client.py) |
 | `RCON_PORT` | 既定 `25575` |
 | `RCON_PASSWORD` | RCON ログイン |
 | `STREAMLIT_PASSWORD` | 設定時のみログイン gate — [app/main.py](../app/main.py) `check_password` |
 
-モデル ID は [app/ai/routing.py](../app/ai/routing.py) の `ROUTES` にコード固定（`gemini-3-pro-preview` / `gemini-3-pro-image-preview`）。キーだけ工程別に分離できる。
+モデル ID の選定根拠（Function Calling 比較）の一例: [Berkeley Function Calling Leaderboard](https://gorilla.cs.berkeley.edu/leaderboard.html)。実装では `routing.py` の定数を製品方針として固定し、四半期などの周期で見直す運用を推奨します。
 
 テンプレート: [.env.example](../.env.example)。systemd では `EnvironmentFile=` で `.env` を読み込む構成になっている（[deployment/bananacraft.service](../deployment/bananacraft.service)）。
-
-サイドバーで入力したキーは従来どおり `GEMINI_API_KEY` 環境変数へ書き込まれ、上記フォールバック経由で各工程に届く。
 
 ---
 
 ## 9. デプロイと運用
 
-- **Docker Compose**（推奨・ローカル検証や単一ホスト運用）: リポジトリルートの [Dockerfile](../Dockerfile) と [docker-compose.yml](../docker-compose.yml)。`docker compose up --build -d` で Streamlit を `http://localhost:8501` に公開。`./projects` をボリュームマウント。ホスト上の Minecraft RCON へは `RCON_HOST=host.docker.internal`（Linux は compose の `extra_hosts` 済み）を参照。
 - [setup.sh](../setup.sh): 仮想環境・依存関係・Streamlit 等の一括セットアップ。
 - [deployment/bananacraft.service](../deployment/bananacraft.service): `streamlit run app/main.py --server.port 8501`。`User` / `WorkingDirectory` / `ExecStart` のパスは **実環境のユーザー名に合わせて編集**すること。
 - [deployment/minecraft.service](../deployment/minecraft.service): Minecraft サーバ用（同様にパス調整）。
@@ -233,9 +239,12 @@ flowchart TB
 
 ### 10.3 モデル・生成パラメータ
 
+- 工程ごとのプロバイダ・モデル ID: [app/ai/routing.py](../app/ai/routing.py) の `ROUTES` / `effective_route`
+- 実際の HTTP 呼び出し: [app/ai/providers/stage_client.py](../app/ai/providers/stage_client.py)
 - 会話・コンセプト画像: [app/api_client.py](../app/api_client.py)
-- 建築解析・FC: [app/v2/architect.py](../app/v2/architect.py) の `generate_content` 各所の `temperature` / `model`
+- 建築解析・FC: [app/v2/architect.py](../app/v2/architect.py)
 - 都市インフラ: [app/v2/city_planner.py](../app/v2/city_planner.py)
+- 装飾: [app/v2/decorator.py](../app/v2/decorator.py)
 
 ### 10.4 UI／Phase の変更
 

@@ -1,12 +1,14 @@
-"""工程別 AI ルーティング（固定バインド）。外部からは routing を主に参照。"""
-from .routing import AIStage, StageRoute, ROUTES, resolve_api_key, client_for_stage, text_model, image_model
+"""工程別 AI ルーティングとキー解決。"""
+from .routing import AIStage, Provider, StageRoute, ROUTES, resolve_env, text_model, image_model
+from . import key_store
 
 __all__ = [
     "AIStage",
+    "Provider",
     "StageRoute",
     "ROUTES",
-    "resolve_api_key",
-    "client_for_stage",
+    "resolve_env",
     "text_model",
     "image_model",
+    "key_store",
 ]

@@ -8,15 +8,13 @@ from typing import List, Dict, Any, Optional
 from dataclasses import asdict
 
 try:
-    from google.genai import types
-    HAS_GENAI = True
+    from ai.providers.stage_client import complete_with_tools
+    from ai.routing import AIStage
+    from ai.key_store import apply_context
 except ImportError:
-    HAS_GENAI = False
-
-try:
-    from ai.routing import AIStage, client_for_stage, text_model
-except ImportError:
-    from app.ai.routing import AIStage, client_for_stage, text_model
+    from app.ai.providers.stage_client import complete_with_tools
+    from app.ai.routing import AIStage
+    from app.ai.key_store import apply_context
 
 from .architect import BuildingInstruction
 from .blueprint_analyzer import BlueprintAnalyzer
@@ -62,28 +60,16 @@ DECORATOR_TOOLS = [
 
 class Decorator:
     def __init__(self, api_key: Optional[str] = None):
-        if not HAS_GENAI:
-            raise ImportError("google-genai package required")
-        
-        self._key_override = api_key
-        self.client = client_for_stage(AIStage.DECORATION, api_key)
-        self.model_name = text_model(AIStage.DECORATION) 
+        if api_key:
+            apply_context({"GEMINI_API_KEY": api_key})
 
     def _get_mime_type(self, path: str) -> str:
         ext = os.path.splitext(path)[1].lower()
         return {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}.get(ext, "image/jpeg")
 
-    def _parse_response(self, response) -> List[BuildingInstruction]:
-        instructions = []
-        if not response.candidates: return []
-        for candidate in response.candidates:
-            if not candidate.content or not candidate.content.parts: continue
-            for part in candidate.content.parts:
-                if hasattr(part, 'function_call') and part.function_call:
-                    fc = part.function_call
-                    params = dict(fc.args) if fc.args else {}
-                    instructions.append(BuildingInstruction(tool_name=fc.name, parameters=params))
-        return instructions
+    @staticmethod
+    def _to_instructions(results):
+        return [BuildingInstruction(tool_name=r.name, parameters=r.arguments) for r in results]
 
     def generate_decoration_plan(self, 
                                  image_path: str,
@@ -162,31 +148,15 @@ Apply decorations to these IDs to match the image style.
 If a wall (ID) is empty but needs a window, DRAW THE WINDOW AND THE DECORATION on it using `decorate_element`.
 """
         
-        contents = []
-        if image_data:
-            contents.append(types.Part.from_bytes(data=image_data, mime_type=self._get_mime_type(image_path)))
-        contents.append(user_prompt)
-        
-        tool_config = types.Tool(
-            function_declarations=[
-                types.FunctionDeclaration(
-                    name=tool["name"],
-                    description=tool["description"],
-                    parameters=tool["parameters"]
-                )
-                for tool in DECORATOR_TOOLS
-            ]
-        )
-
         print("  🎨 Decorator: Planning attached decorations...")
-        response = self.client.models.generate_content(
-            model=self.model_name,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                tools=[tool_config],
-                temperature=0.5,
-            )
+        results = complete_with_tools(
+            AIStage.DECORATION,
+            system=system_prompt,
+            user_text=user_prompt,
+            declarations=DECORATOR_TOOLS,
+            image_bytes=image_data,
+            image_mime=self._get_mime_type(image_path) if image_path else "image/jpeg",
+            temperature=0.5,
         )
         
-        return self._parse_response(response)
+        return self._to_instructions(results)
