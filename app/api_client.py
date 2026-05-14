@@ -1,17 +1,26 @@
 import os
-from google import genai
+from typing import Optional
+
 from google.genai import types
 import base64
 from io import BytesIO
 
-# Default model configuration
-TEXT_MODEL = "gemini-3-pro-preview" 
-CHAT_MODEL = "gemini-3-pro-preview" 
-IMAGE_MODEL = "gemini-3-pro-image-preview"
+from ai.routing import AIStage, client_for_stage, image_model, text_model
+
+# 後方互換・外部参照用（ルーティングと同一モデル）
+TEXT_MODEL = text_model(AIStage.CONCEPT_BRAIN)
+CHAT_MODEL = TEXT_MODEL
+IMAGE_MODEL = image_model(AIStage.IMAGE_RENDER)
+
 
 class GeminiClient:
-    def __init__(self, api_key: str):
-        self.client = genai.Client(api_key=api_key)
+    def __init__(self, api_key: Optional[str] = None):
+        """
+        api_key が渡された場合は全工程でそのキーを使う（従来どおり単一キー運用向け）。
+        None の場合は工程ごとの環境変数（未設定時は GEMINI_API_KEY）を参照する。
+        """
+        self._key_override = api_key
+        self.client = client_for_stage(AIStage.CONCEPT_BRAIN, self._key_override)
         self.chat_session = None
         # System instruction for the "Brain"
         self.system_instruction = """
@@ -42,7 +51,7 @@ class GeminiClient:
         )
         
         self.chat_session = self.client.chats.create(
-             model=CHAT_MODEL,
+             model=text_model(AIStage.CONCEPT_BRAIN),
              config=config,
              history=history or []
         )
@@ -54,7 +63,8 @@ class GeminiClient:
         Supports multimodal input (text + image).
         """
         print(f"Generating text with Gemini 3 (One-off)...")
-        
+        cli = client_for_stage(AIStage.CONCEPT_BRAIN, self._key_override)
+
         config = None
         if system_instruction:
             config = types.GenerateContentConfig(system_instruction=system_instruction)
@@ -68,8 +78,8 @@ class GeminiClient:
             contents.append(image_part)
 
         try:
-             response = self.client.models.generate_content(
-                 model=CHAT_MODEL,
+             response = cli.models.generate_content(
+                 model=text_model(AIStage.CONCEPT_BRAIN),
                  contents=contents,
                  config=config
              )
@@ -125,9 +135,9 @@ class GeminiClient:
                 image_part = types.Part.from_bytes(data=reference_image_bytes, mime_type="image/jpeg")
                 contents.append(image_part)
 
-            # Using generate_content as verified by test script
-            response = self.client.models.generate_content(
-                model=IMAGE_MODEL,
+            img_cli = client_for_stage(AIStage.IMAGE_RENDER, self._key_override)
+            response = img_cli.models.generate_content(
+                model=image_model(AIStage.IMAGE_RENDER),
                 contents=contents
             )
             
@@ -236,14 +246,14 @@ class GeminiClient:
         print(f"--- Generating Structure Image ---\nPrompt: {prompt[:200]}...")
         return self.generate_image(prompt, reference_image_bytes=decorated_image_bytes)
 
-    def generate_zoning_json(self, concept_text: str):
+    def generate_zoning_json(self, concept_context: str):
         """
-        Ask the chat model to generate Zoning JSON based on the concept.
-        This reuses the chat context so it 'knows' the concept.
+        区画 JSON を単発生成する（専用 API キー・モデル: ZONING_PLAN）。
+        concept_context にコンセプト思考・画像プロンプト等をまとめて渡す（チャット履歴に依存しない）。
         """
-        prompt = f"""
+        body = """
         あなたは熟練した都市計画家であり、マインクラフトの建築家です。
-        現在設計中の都市コンセプト（ムードボード）の世界観に基づき、200x200ブロックのエリアに建設する「街の設計図」を作成してください。
+        以下の「確立したコンセプト」の世界観に基づき、200x200ブロックのエリアに建設する「街の設計図」を作成してください。
 
         【制約条件】
         エリア定義: ワールド座標 (x: 0, z: 0) を始点とし、(x: 200, z: 200) を終点とする正方形の範囲内です。
@@ -285,18 +295,30 @@ class GeminiClient:
           ]
         }}
         """
-        response = self.chat_session.send_message(prompt)
-        
-        # Debug
+        header = ""
+        if concept_context and concept_context.strip():
+            header = (
+                "# 確立したコンセプト（デザインセッションより）\n"
+                + concept_context.strip()
+                + "\n\n"
+            )
+        user_prompt = header + body
+
+        cli = client_for_stage(AIStage.ZONING_PLAN, self._key_override)
+        response = cli.models.generate_content(
+            model=text_model(AIStage.ZONING_PLAN),
+            contents=user_prompt,
+            config=types.GenerateContentConfig(response_mime_type="application/json"),
+        )
+
         print(f"Zoning Raw Response: {response.text}")
 
         try:
-             if response.parsed:
-                 return response.parsed
-        except:
-             pass
-             
-        # Fallback
+            if getattr(response, "parsed", None):
+                return response.parsed
+        except Exception:
+            pass
+
         import json
         text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(text)

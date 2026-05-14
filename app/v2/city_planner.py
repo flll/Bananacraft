@@ -4,17 +4,20 @@ City Planner - Gemini Function Calling client for Bananacraft 2.0 (Infrastructur
 Analyzes the "Zoning Plan" (Building footprints) and generates instructions
 to build roads, plazas, and terrain in the empty spaces.
 """
-import os
 import json
 from typing import List, Dict, Any, Optional
 from dataclasses import asdict
 
 try:
-    from google import genai
     from google.genai import types
     HAS_GENAI = True
 except ImportError:
     HAS_GENAI = False
+
+try:
+    from ai.routing import AIStage, client_for_stage, text_model
+except ImportError:
+    from app.ai.routing import AIStage, client_for_stage, text_model
 
 # Import shared structures
 try:
@@ -74,12 +77,9 @@ class CityPlanner:
         if not HAS_GENAI:
             raise ImportError("google-genai package required")
         
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        if not self.api_key:
-            raise ValueError("GEMINI_API_KEY not set")
-        
-        self.client = genai.Client(api_key=self.api_key)
-        self.model_name = "gemini-3-pro-preview" 
+        self._key_override = api_key
+        self.client = client_for_stage(AIStage.INFRASTRUCTURE, api_key)
+        self.model_name = text_model(AIStage.INFRASTRUCTURE) 
 
     def _parse_response(self, response) -> List[BuildingInstruction]:
         instructions = []

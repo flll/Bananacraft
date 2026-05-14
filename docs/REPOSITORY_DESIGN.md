@@ -71,7 +71,7 @@ flowchart TB
 | Phase | 画面の主旨 | 主に触るコード | 備考 |
 |-------|------------|----------------|------|
 | **0** | 新規プロジェクト作成、API キー確認 | [app/main.py](../app/main.py) 冒頭〜 `phase == 0` | `FileManager`、`GeminiClient`、`Architect` を初期化。既存 `concept_*` / `zoning_*` があれば復元して **1 へ** |
-| **1** | コンセプトアート、ゾーニング、インフラ、テラフォーム | `phase == 1` | `GeminiClient` のチャット／画像、`CityPlanner`、`zoning_fixer` 経由の調整、任意で `Terraformer` |
+| **1** | コンセプトアート、ゾーニング、インフラ、テラフォーム | `phase == 1` | `GeminiClient` のチャット／画像、区画は `ZONING_PLAN` 工程の単発生成、`CityPlanner`、`zoning_fixer` 経由の調整、任意で `Terraformer` |
 | **2** | 区画（ゾーン）を 1 つ選び、外観画像 → 設計図（JSON）→ ブロック列 | `phase == 2` | `selected_zone`、`Architect.analyze_structure` / `generate_from_structure`、`CarpenterSession`、`BlueprintAnalyzer`（プレビュー）、3D は [app/v2/preview.py](../app/v2/preview.py) |
 | **3** | 構造物の RCON 一括建築、クリア、装飾プラン生成、Mineflayer 実行 | `phase == 3` | `RconClient.build_voxels`、`Decorator`、`CarpenterSession.run_bot` |
 
@@ -96,6 +96,7 @@ flowchart TB
 | [app/v2/zoning_fixer.py](../app/v2/zoning_fixer.py) | 区画 JSON の衝突検出・修正 |
 | [app/v2/layout_engine.py](../app/v2/layout_engine.py) | レイアウト計算（ゾーン座標などと連携） |
 | [app/v2/geometry/](../app/v2/geometry/) | ベジェ、階段、ボクセル化など幾何サブルーチン |
+| [app/ai/routing.py](../app/ai/routing.py) | **工程別の固定モデル・API キー環境変数**（Gemini 前提。`ROUTES` / `client_for_stage`） |
 | [AI_Carpenter_Bot/](../AI_Carpenter_Bot/) | Mineflayer クライアント、`package.json` で依存管理 |
 | [deployment/](../deployment/) | systemd ユニット例 |
 | [setup.sh](../setup.sh) | 環境セットアップ |
@@ -165,7 +166,7 @@ flowchart TB
 ### 6.4 Decorator と BlueprintAnalyzer
 
 - [app/v2/blueprint_analyzer.py](../app/v2/blueprint_analyzer.py): `draw_plane` / `place_window` / `place_door` 等から要素 ID・向き・範囲を構築。
-- [app/v2/decorator.py](../app/v2/decorator.py): 完成イメージ画像＋コンセプト＋構造指示から装飾用の Function Calling を生成。API キーは `GEMINI_API_KEY`。
+- [app/v2/decorator.py](../app/v2/decorator.py): 完成イメージ画像＋コンセプト＋構造指示から装飾用の Function Calling を生成。キー／モデルは [app/ai/routing.py](../app/ai/routing.py) の `DECORATION` 工程にバインド。
 
 ---
 
@@ -183,13 +184,24 @@ flowchart TB
 
 | 変数 | 用途 |
 |------|------|
-| `GEMINI_API_KEY` | Gemini 全般（必須） |
+| `GEMINI_API_KEY` | **全工程のフォールバック**用。工程別キーが未設定のときに使用 |
+| `GEMINI_API_KEY_CONCEPT` | コンセプト対話・プロンプト推敲（[`api_client`](../app/api_client.py) のチャット） |
+| `GEMINI_API_KEY_IMAGE` | コンセプト／設計画像生成（`IMAGE_RENDER`） |
+| `GEMINI_API_KEY_ZONING` | 区画 JSON 単発生成（チャット履歴に依存しない） |
+| `GEMINI_API_KEY_ARCHITECT_VISION` | 建築 Stage1（画像→構造記述） |
+| `GEMINI_API_KEY_ARCHITECT_BUILD` | 建築 Stage2（構造→Function Calling） |
+| `GEMINI_API_KEY_INFRA` | インフラ FC（[`city_planner`](../app/v2/city_planner.py)） |
+| `GEMINI_API_KEY_DECORATOR` | 装飾 FC（[`decorator`](../app/v2/decorator.py)） |
 | `RCON_HOST` | 既定 `localhost` — [app/rcon_client.py](../app/rcon_client.py) |
 | `RCON_PORT` | 既定 `25575` |
 | `RCON_PASSWORD` | RCON ログイン |
 | `STREAMLIT_PASSWORD` | 設定時のみログイン gate — [app/main.py](../app/main.py) `check_password` |
 
+モデル ID は [app/ai/routing.py](../app/ai/routing.py) の `ROUTES` にコード固定（`gemini-3-pro-preview` / `gemini-3-pro-image-preview`）。キーだけ工程別に分離できる。
+
 テンプレート: [.env.example](../.env.example)。systemd では `EnvironmentFile=` で `.env` を読み込む構成になっている（[deployment/bananacraft.service](../deployment/bananacraft.service)）。
+
+サイドバーで入力したキーは従来どおり `GEMINI_API_KEY` 環境変数へ書き込まれ、上記フォールバック経由で各工程に届く。
 
 ---
 
