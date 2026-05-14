@@ -207,6 +207,7 @@ flowchart TB
 
 ## 9. デプロイと運用
 
+- **Docker Compose**（推奨・ローカル検証や単一ホスト運用）: リポジトリルートの [Dockerfile](../Dockerfile) と [docker-compose.yml](../docker-compose.yml)。`docker compose up --build -d` で Streamlit を `http://localhost:8501` に公開。`./projects` をボリュームマウント。ホスト上の Minecraft RCON へは `RCON_HOST=host.docker.internal`（Linux は compose の `extra_hosts` 済み）を参照。
 - [setup.sh](../setup.sh): 仮想環境・依存関係・Streamlit 等の一括セットアップ。
 - [deployment/bananacraft.service](../deployment/bananacraft.service): `streamlit run app/main.py --server.port 8501`。`User` / `WorkingDirectory` / `ExecStart` のパスは **実環境のユーザー名に合わせて編集**すること。
 - [deployment/minecraft.service](../deployment/minecraft.service): Minecraft サーバ用（同様にパス調整）。
