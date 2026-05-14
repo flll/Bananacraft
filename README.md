@@ -4,6 +4,27 @@ This is the deployment version of Bananacraft, stripped of legacy code and optim
 
 開発者向けのリポジトリ設計・データフロー・改修ガイドは [docs/REPOSITORY_DESIGN.md](docs/REPOSITORY_DESIGN.md) を参照してください。
 
+## Docker Compose（localhost / サーバ共通）
+
+リポジトリルートで次を実行します（初回はビルドに数分かかることがあります）。
+
+```bash
+cp .env.example .env   # 未作成の場合
+# .env に GEMINI_API_KEY および RCON_* を設定
+
+docker compose up --build -d
+```
+
+- **UI**: [http://localhost:8501](http://localhost:8501)
+- **プロジェクトデータ**: ホストの `./projects` がコンテナの `/app/projects` にマウントされます。
+- **ホスト上の Minecraft（RCON）**へ接続する場合は `.env` で `RCON_HOST=host.docker.internal` を推奨します（`docker-compose.yml` で Linux 向け `extra_hosts` を設定済みです）。
+
+停止・削除:
+
+```bash
+docker compose down
+```
+
 ## 📦 Contents
 - **app/**: Streamlit Application (v2)
 - **AI_Carpenter_Bot/**: Node.js Mineflayer Bot
