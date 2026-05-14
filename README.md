@@ -2,6 +2,8 @@
 
 This is the deployment version of Bananacraft, stripped of legacy code and optimized for GCE.
 
+開発者向けのリポジトリ設計・データフロー・改修ガイドは [docs/REPOSITORY_DESIGN.md](docs/REPOSITORY_DESIGN.md) を参照してください。
+
 ## 📦 Contents
 - **app/**: Streamlit Application (v2)
 - **AI_Carpenter_Bot/**: Node.js Mineflayer Bot
