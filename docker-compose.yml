@@ -1,0 +1,30 @@
+# Bananacraft — localhost / 本番兼用の Compose 定義
+# 使い方: cp .env.example .env を編集してから
+#   docker compose up --build -d
+# UI: http://localhost:8501
+#
+# Minecraft の RCON がホスト上にある場合は .env の RCON_HOST を
+# host.docker.internal にし（Linux は下記 extra_hosts 済み）、
+# コンテナからホストの RCON ポートへ届くようにしてください。
+
+name: bananacraft
+
+services:
+  bananacraft:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bananacraft:latest
+    container_name: bananacraft
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      # ホスト上の Minecraft RCON へ接続するときの既定（.env で上書き可）
+      RCON_HOST: ${RCON_HOST:-host.docker.internal}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./projects:/app/projects
+    restart: unless-stopped
