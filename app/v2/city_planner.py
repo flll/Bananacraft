@@ -4,17 +4,18 @@ City Planner - Gemini Function Calling client for Bananacraft 2.0 (Infrastructur
 Analyzes the "Zoning Plan" (Building footprints) and generates instructions
 to build roads, plazas, and terrain in the empty spaces.
 """
-import os
 import json
 from typing import List, Dict, Any, Optional
 from dataclasses import asdict
 
 try:
-    from google import genai
-    from google.genai import types
-    HAS_GENAI = True
+    from ai.providers.stage_client import complete_with_tools
+    from ai.routing import AIStage
+    from ai.key_store import apply_context
 except ImportError:
-    HAS_GENAI = False
+    from app.ai.providers.stage_client import complete_with_tools
+    from app.ai.routing import AIStage
+    from app.ai.key_store import apply_context
 
 # Import shared structures
 try:
@@ -71,32 +72,12 @@ INFRA_TOOLS = [
 
 class CityPlanner:
     def __init__(self, api_key: Optional[str] = None):
-        if not HAS_GENAI:
-            raise ImportError("google-genai package required")
-        
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        if not self.api_key:
-            raise ValueError("GEMINI_API_KEY not set")
-        
-        self.client = genai.Client(api_key=self.api_key)
-        self.model_name = "gemini-3-pro-preview" 
+        if api_key:
+            apply_context({"GEMINI_API_KEY": api_key})
 
-    def _parse_response(self, response) -> List[BuildingInstruction]:
-        instructions = []
-        if not response.candidates: return []
-        
-        for candidate in response.candidates:
-            if not candidate.content or not candidate.content.parts:
-                continue
-            for part in candidate.content.parts:
-                if hasattr(part, 'function_call') and part.function_call:
-                    fc = part.function_call
-                    params = dict(fc.args) if fc.args else {}
-                    instructions.append(BuildingInstruction(
-                        tool_name=fc.name,
-                        parameters=params
-                    ))
-        return instructions
+    @staticmethod
+    def _to_instructions(results):
+        return [BuildingInstruction(tool_name=r.name, parameters=r.arguments) for r in results]
 
     def generate_infrastructure(self, 
                                 zoning_data: Dict[str, Any],
@@ -169,28 +150,15 @@ Design the roads and public spaces.
 4. Add street lights and trees.
 """
 
-        tool_config = types.Tool(
-            function_declarations=[
-                types.FunctionDeclaration(
-                    name=tool["name"],
-                    description=tool["description"],
-                    parameters=tool["parameters"]
-                )
-                for tool in INFRA_TOOLS
-            ]
-        )
-
         print("  🏗️ City Planner: Designing infrastructure...")
-        response = self.client.models.generate_content(
-            model=self.model_name,
-            contents=user_prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                tools=[tool_config],
-                temperature=0.4, # Lower temperature for organized layout
-            )
+        results = complete_with_tools(
+            AIStage.INFRASTRUCTURE,
+            system=system_prompt,
+            user_text=user_prompt,
+            declarations=INFRA_TOOLS,
+            image_bytes=None,
+            temperature=0.4,
         )
-        
-        instructions = self._parse_response(response)
+        instructions = self._to_instructions(results)
         print(f"  🛣️ Generated {len(instructions)} infrastructure steps.")
         return instructions

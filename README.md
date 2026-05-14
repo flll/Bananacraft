@@ -4,6 +4,13 @@ This is the deployment version of Bananacraft, stripped of legacy code and optim
 
 開発者向けのリポジトリ設計・データフロー・改修ガイドは [docs/REPOSITORY_DESIGN.md](docs/REPOSITORY_DESIGN.md) を参照してください。
 
+## API キーとマルチ LLM
+
+- **既定割当**: 区画 JSON・建築／インフラの Function Calling は OpenAI（`gpt-4.1` / `gpt-4o`）、コンセプト対話と装飾は Anthropic（Claude 3.5 Sonnet）、参照付き画像生成は Google Gemini。実装は [app/ai/routing.py](app/ai/routing.py) で固定されています。
+- **単一キー運用**: `OPENAI_API_KEY` や `ANTHROPIC_API_KEY` が無くても、`GEMINI_API_KEY` のみで全工程が Gemini にフォールバックします。
+- **ブラウザ永続化**: Streamlit サイドバーから `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` を入力し、「ブラウザに保存」で **localStorage** に JSON 保存できます（依存: `streamlit-js-eval`）。**XSS があるページではキーが窃取されうる**ため、信頼できる環境でのみ利用し、本番ではサーバ側シークレットやプロキシ方式を推奨します。
+- **Function Calling のベンチマーク例**: [Berkeley Function Calling Leaderboard](https://gorilla.cs.berkeley.edu/leaderboard.html) をモデル選定の参考にし、リリース周期で `routing.py` の ID を見直してください。
+
 ## 📦 Contents
 - **app/**: Streamlit Application (v2)
 - **AI_Carpenter_Bot/**: Node.js Mineflayer Bot
@@ -28,7 +35,7 @@ Copy the environment file and edit it:
 cp .env.example .env
 nano .env
 ```
-*Set your `GEMINI_API_KEY` and `RCON_PASSWORD`.*
+*Set your `GEMINI_API_KEY`（最低限・画像とフォールバック用）および任意で `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`。詳細は `.env.example` と上記「API キーとマルチ LLM」を参照。*
 
 ### 4. Setup Minecraft Server
 Install your Minecraft Server separately (e.g., in `~/minecraft_server`).

@@ -7,7 +7,6 @@ import os
 import requests
 import base64
 from dotenv import load_dotenv
-from dotenv import load_dotenv
 load_dotenv()
 
 # Fix path for imports when running via Streamlit from root
@@ -17,7 +16,6 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-from api_client import GeminiClient
 from api_client import GeminiClient
 from meshy_client import MeshyClient
 # Legacy voxelizer import commented out
@@ -39,7 +37,11 @@ from v2.carpenter import CarpenterSession
 from v2.decorator import Decorator
 from v2.preview import create_3d_preview 
 from v2.city_planner import CityPlanner
-from v2.blueprint_analyzer import BlueprintAnalyzer 
+from v2.blueprint_analyzer import BlueprintAnalyzer
+
+from ai.key_store import apply_context
+from ai.browser_keys import load_persisted_keys, save_persisted_keys, clear_persisted_keys
+from ai.routing import AIStage, resolve_api_key_for_stage
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -113,16 +115,63 @@ if 'selected_zone' not in st.session_state:
 if 'design_images' not in st.session_state:
     st.session_state.design_images = None
 
-# --- Sidebar ---
+if "api_key_context" not in st.session_state:
+    st.session_state.api_key_context = {}
+if not st.session_state.get("_browser_keys_hydrated"):
+    st.session_state.api_key_context.update(load_persisted_keys())
+    st.session_state._browser_keys_hydrated = True
 with st.sidebar:
     st.title("🍌 Bananacraft")
     st.caption("AI都市開発システム")
-    
-    # API Key Input
-    api_key = st.text_input("Gemini API Key", type="password")
-    if api_key:
-        os.environ["GEMINI_API_KEY"] = api_key
-    
+
+    with st.expander("🔑 API キー（session / localStorage）", expanded=False):
+        st.caption(
+            "localStorage に保存できます。XSS のあるページではキーが漏洩しうるため、"
+            "信頼できる環境でのみ利用し、本番ではサーバ側シークレットやプロキシを推奨します。"
+        )
+        if "sb_gem" not in st.session_state and st.session_state.api_key_context.get("GEMINI_API_KEY"):
+            st.session_state.sb_gem = st.session_state.api_key_context["GEMINI_API_KEY"]
+        if "sb_oai" not in st.session_state and st.session_state.api_key_context.get("OPENAI_API_KEY"):
+            st.session_state.sb_oai = st.session_state.api_key_context["OPENAI_API_KEY"]
+        if "sb_ant" not in st.session_state and st.session_state.api_key_context.get("ANTHROPIC_API_KEY"):
+            st.session_state.sb_ant = st.session_state.api_key_context["ANTHROPIC_API_KEY"]
+
+        st.text_input("GEMINI_API_KEY", type="password", key="sb_gem", help="画像生成・フォールバック用")
+        st.text_input("OPENAI_API_KEY", type="password", key="sb_oai", help="区画 JSON・建築 FC 等")
+        st.text_input("ANTHROPIC_API_KEY", type="password", key="sb_ant", help="コンセプト対話・装飾 FC 等")
+
+        for wkey, env in (
+            ("sb_gem", "GEMINI_API_KEY"),
+            ("sb_oai", "OPENAI_API_KEY"),
+            ("sb_ant", "ANTHROPIC_API_KEY"),
+        ):
+            v = st.session_state.get(wkey, "")
+            if isinstance(v, str) and v.strip():
+                st.session_state.api_key_context[env] = v.strip()
+
+        apply_context(st.session_state.api_key_context)
+        for k, v in st.session_state.api_key_context.items():
+            if v:
+                os.environ[k] = v
+
+        c_save, c_clr = st.columns(2)
+        with c_save:
+            if st.button("ブラウザに保存", help="localStorage に書き込み"):
+                try:
+                    save_persisted_keys(st.session_state.api_key_context)
+                    st.success("保存しました")
+                except Exception as e:
+                    st.warning(str(e))
+        with c_clr:
+            if st.button("ブラウザから削除", type="secondary"):
+                clear_persisted_keys()
+                st.session_state.api_key_context = {}
+                for wkey in ("sb_gem", "sb_oai", "sb_ant"):
+                    st.session_state.pop(wkey, None)
+                st.session_state._browser_keys_hydrated = False
+                apply_context({})
+                st.rerun()
+
     st.divider()
     if st.session_state.phase > 0:
         st.info(f"Project: {st.session_state.project_name}")
@@ -197,20 +246,23 @@ if st.session_state.phase == 0:
         if submitted and p_name:
             # Init Managers
             try:
-                key = os.getenv("GEMINI_API_KEY")
-                if not key:
-                    st.error("API Keyを入力してください。")
+                try:
+                    resolve_api_key_for_stage(AIStage.IMAGE_RENDER)
+                except ValueError:
+                    st.error(
+                        "API キーが不足しています。サイドバーの GEMINI_API_KEY（画像生成）を設定するか、"
+                        ".env に GEMINI_API_KEY を設定してください。"
+                    )
                     st.stop()
-                    
-                st.session_state.project_name = p_name
+
                 st.session_state.project_name = p_name
                 st.session_state.file_manager = FileManager(p_name)
-                st.session_state.gemini_client = GeminiClient(key)
+                st.session_state.gemini_client = GeminiClient()
                 st.session_state.chat_session = st.session_state.gemini_client.start_chat()
-                
+
                 # Initializing v2 Architect
                 try:
-                    st.session_state.architect = Architect(key)
+                    st.session_state.architect = Architect()
                 except Exception as e:
                     st.error(f"Failed to initialize Architect: {e}")
 
@@ -327,7 +379,14 @@ elif st.session_state.phase == 1:
                 if st.button("✅ コンセプト承認 -> 区画整理へ"):
                     with st.spinner("Generating Zoning Data..."):
                         try:
-                            zoning_data = client.generate_zoning_json("")
+                            c = st.session_state.concept or {}
+                            ctx_parts = [
+                                str(c.get("description") or "").strip(),
+                                str(c.get("refined_prompt") or "").strip(),
+                                str(c.get("title") or "").strip(),
+                            ]
+                            concept_ctx = "\n\n".join(x for x in ctx_parts if x)
+                            zoning_data = client.generate_zoning_json(concept_ctx)
                             # The client now returns parsed object or list
                             # Apply Fixes (Collision Resolution & Orientation)
                             from v2.zoning_fixer import fix_zoning
