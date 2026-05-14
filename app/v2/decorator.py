@@ -8,11 +8,15 @@ from typing import List, Dict, Any, Optional
 from dataclasses import asdict
 
 try:
-    from google import genai
     from google.genai import types
     HAS_GENAI = True
 except ImportError:
     HAS_GENAI = False
+
+try:
+    from ai.routing import AIStage, client_for_stage, text_model
+except ImportError:
+    from app.ai.routing import AIStage, client_for_stage, text_model
 
 from .architect import BuildingInstruction
 from .blueprint_analyzer import BlueprintAnalyzer
@@ -61,9 +65,9 @@ class Decorator:
         if not HAS_GENAI:
             raise ImportError("google-genai package required")
         
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        self.client = genai.Client(api_key=self.api_key)
-        self.model_name = "gemini-3-pro-preview" 
+        self._key_override = api_key
+        self.client = client_for_stage(AIStage.DECORATION, api_key)
+        self.model_name = text_model(AIStage.DECORATION) 
 
     def _get_mime_type(self, path: str) -> str:
         ext = os.path.splitext(path)[1].lower()

@@ -12,11 +12,15 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 
 try:
-    from google import genai
     from google.genai import types
     HAS_GENAI = True
 except ImportError:
     HAS_GENAI = False
+
+try:
+    from ai.routing import AIStage, client_for_stage, text_model
+except ImportError:
+    from app.ai.routing import AIStage, client_for_stage, text_model
 
 
 @dataclass
@@ -325,14 +329,13 @@ class Architect:
     def __init__(self, api_key: Optional[str] = None, debug: bool = False):
         if not HAS_GENAI:
             raise ImportError("google-genai package required")
-        
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        if not self.api_key:
-            raise ValueError("GEMINI_API_KEY not set")
-        
-        self.client = genai.Client(api_key=self.api_key)
-        self.model_name = "gemini-3-pro-preview"
+
         self.debug = debug
+        self._key_override = api_key
+        self._cli_vision = client_for_stage(AIStage.ARCHITECT_VISION, api_key)
+        self._cli_build = client_for_stage(AIStage.ARCHITECT_BUILD, api_key)
+        self.model_vision = text_model(AIStage.ARCHITECT_VISION)
+        self.model_build = text_model(AIStage.ARCHITECT_BUILD)
     
     def analyze_structure(self, image_path: str, building_info: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -379,8 +382,8 @@ Be precise about positions. Identify ALL visible components including walls, flo
             user_prompt
         ]
         
-        response = self.client.models.generate_content(
-            model=self.model_name,
+        response = self._cli_vision.models.generate_content(
+            model=self.model_vision,
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
@@ -485,8 +488,8 @@ Create EVERY component:
             ]
         )
         
-        response = self.client.models.generate_content(
-            model=self.model_name,
+        response = self._cli_build.models.generate_content(
+            model=self.model_build,
             contents=user_prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
@@ -594,8 +597,8 @@ Count and position each window and door precisely!"""
             stage1_user
         ]
         
-        response1 = self.client.models.generate_content(
-            model=self.model_name,
+        response1 = self._cli_vision.models.generate_content(
+            model=self.model_vision,
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=stage1_system,
@@ -701,8 +704,8 @@ Create EVERY component:
             ]
         )
         
-        response2 = self.client.models.generate_content(
-            model=self.model_name,
+        response2 = self._cli_build.models.generate_content(
+            model=self.model_build,
             contents=stage2_user,
             config=types.GenerateContentConfig(
                 system_instruction=stage2_system,
@@ -777,8 +780,8 @@ Generate ALL tool calls to faithfully recreate the structure."""
             ]
         )
         
-        response = self.client.models.generate_content(
-            model=self.model_name,
+        response = self._cli_vision.models.generate_content(
+            model=self.model_vision,
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
@@ -835,8 +838,8 @@ Tools: draw_plane (surfaces), place_smart_pillar (columns), draw_curve_loft (arc
             ]
         )
         
-        response = self.client.models.generate_content(
-            model=self.model_name,
+        response = self._cli_build.models.generate_content(
+            model=self.model_build,
             contents=user_prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,

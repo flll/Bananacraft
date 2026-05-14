@@ -4,6 +4,8 @@ This is the deployment version of Bananacraft, stripped of legacy code and optim
 
 開発者向けのリポジトリ設計・データフロー・改修ガイドは [docs/REPOSITORY_DESIGN.md](docs/REPOSITORY_DESIGN.md) を参照してください。
 
+Gemini 呼び出しは工程別に専用 API キー（およびコード固定の強モデル ID）へルーティングされます。未設定のキーは `GEMINI_API_KEY` にフォールバックします。詳細は [.env.example](.env.example) と設計書の「環境変数」節を参照してください。
+
 ## 📦 Contents
 - **app/**: Streamlit Application (v2)
 - **AI_Carpenter_Bot/**: Node.js Mineflayer Bot

@@ -40,6 +40,7 @@ from v2.decorator import Decorator
 from v2.preview import create_3d_preview 
 from v2.city_planner import CityPlanner
 from v2.blueprint_analyzer import BlueprintAnalyzer 
+from ai.routing import AIStage, ROUTES, resolve_api_key 
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -197,20 +198,24 @@ if st.session_state.phase == 0:
         if submitted and p_name:
             # Init Managers
             try:
-                key = os.getenv("GEMINI_API_KEY")
-                if not key:
-                    st.error("API Keyを入力してください。")
+                try:
+                    resolve_api_key(ROUTES[AIStage.CONCEPT_BRAIN])
+                except ValueError:
+                    st.error(
+                        "API キーが見つかりません。少なくとも GEMINI_API_KEY または "
+                        "GEMINI_API_KEY_CONCEPT を .env に設定してください。"
+                    )
                     st.stop()
-                    
+
                 st.session_state.project_name = p_name
                 st.session_state.project_name = p_name
                 st.session_state.file_manager = FileManager(p_name)
-                st.session_state.gemini_client = GeminiClient(key)
+                st.session_state.gemini_client = GeminiClient()
                 st.session_state.chat_session = st.session_state.gemini_client.start_chat()
                 
                 # Initializing v2 Architect
                 try:
-                    st.session_state.architect = Architect(key)
+                    st.session_state.architect = Architect()
                 except Exception as e:
                     st.error(f"Failed to initialize Architect: {e}")
 
@@ -327,7 +332,19 @@ elif st.session_state.phase == 1:
                 if st.button("✅ コンセプト承認 -> 区画整理へ"):
                     with st.spinner("Generating Zoning Data..."):
                         try:
-                            zoning_data = client.generate_zoning_json("")
+                            ctx_parts = []
+                            c = st.session_state.concept or {}
+                            if c.get("description"):
+                                ctx_parts.append("【コンセプト思考】\n" + str(c["description"]))
+                            if c.get("refined_prompt"):
+                                ctx_parts.append("【画像生成プロンプト】\n" + str(c["refined_prompt"]))
+                            if fm.exists("concept_input.txt"):
+                                cin = fm.load_text("concept_input.txt")
+                                if cin:
+                                    ctx_parts.append("【ユーザー初期入力】\n" + cin)
+                            concept_ctx = "\n\n".join(ctx_parts)
+
+                            zoning_data = client.generate_zoning_json(concept_ctx)
                             # The client now returns parsed object or list
                             # Apply Fixes (Collision Resolution & Orientation)
                             from v2.zoning_fixer import fix_zoning
