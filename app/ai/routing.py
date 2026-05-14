@@ -46,9 +46,9 @@ class AIStage(Enum):
 
 _GEM_TEXT = "gemini-3-pro-preview"
 _GEM_IMG = "gemini-3-pro-image-preview"
-_OAI_JSON = "gpt-4.1"
-_OAI_VISION = "gpt-4o"
-_CLAUDE = "claude-3-5-sonnet-20241022"
+_OAI_JSON = "gpt-5.5"
+_OAI_VISION = "gpt-5.5"
+_CLAUDE = "claude-sonnet-4-6"
 
 # 既定: 精度寄りのマルチベンダー。キー欠落時は _gemini_only で上書き。
 ROUTES: Final[dict[AIStage, StageRoute]] = {
@@ -57,7 +57,7 @@ ROUTES: Final[dict[AIStage, StageRoute]] = {
         "ANTHROPIC_API_KEY",
         _CLAUDE,
         (),
-        notes="長文対話＋JSON 出力で Claude 3.5 Sonnet を既定。キー無し時は Gemini。",
+        notes="長文対話＋JSON 出力で Claude Sonnet 4.6 を既定。キー無し時は Gemini。",
     ),
     AIStage.IMAGE_RENDER: StageRoute(
         Provider.GOOGLE,
@@ -72,35 +72,35 @@ ROUTES: Final[dict[AIStage, StageRoute]] = {
         "OPENAI_API_KEY",
         _OAI_JSON,
         (),
-        notes="BFCL 参考: https://gorilla.cs.berkeley.edu/leaderboard.html — 構造化 JSON で gpt-4.1。キー無し時は Gemini。",
+        notes="BFCL 参考: https://gorilla.cs.berkeley.edu/leaderboard.html — 構造化 JSON で gpt-5.5。キー無し時は Gemini。",
     ),
     AIStage.ARCHITECT_VISION: StageRoute(
         Provider.OPENAI,
         "OPENAI_API_KEY",
         _OAI_VISION,
         (),
-        notes="マルチモーダル解析に gpt-4o。",
+        notes="マルチモーダル解析に gpt-5.5。",
     ),
     AIStage.ARCHITECT_BUILD: StageRoute(
         Provider.OPENAI,
         "OPENAI_API_KEY",
         _OAI_JSON,
         (),
-        notes="BFCL FC 系で gpt-4.1 を既定。",
+        notes="BFCL FC 系で gpt-5.5 を既定。",
     ),
     AIStage.INFRASTRUCTURE: StageRoute(
         Provider.OPENAI,
         "OPENAI_API_KEY",
         _OAI_JSON,
         (),
-        notes="BFCL FC 系で gpt-4.1（建築 Stage2 と揃えて挙動差分を抑制）。",
+        notes="BFCL FC 系で gpt-5.5（建築 Stage2 と揃えて挙動差分を抑制）。",
     ),
     AIStage.DECORATION: StageRoute(
         Provider.ANTHROPIC,
         "ANTHROPIC_API_KEY",
         _CLAUDE,
         (),
-        notes="画像＋tools: Claude 3.5 Sonnet。BFCL 参考: https://gorilla.cs.berkeley.edu/leaderboard.html 。キー無し時は Gemini。",
+        notes="画像＋tools: Claude Sonnet 4.6。BFCL 参考: https://gorilla.cs.berkeley.edu/leaderboard.html 。キー無し時は Gemini。",
     ),
 }
 

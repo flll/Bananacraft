@@ -153,7 +153,7 @@ flowchart TB
 
 - **Stage 1**: 構造画像を入力に、建物を言語化した JSON（コンポーネント列）へ。`temperature=0.3` 前後で精度重視。
 - **Stage 2**: Stage1 の JSON から **Function Calling** で `TOOL_DECLARATIONS` に沿った呼び出しへ。`temperature=0.5` 前後。
-- デフォルトモデルは **`gemini-3-pro-preview`**（`Architect.model_name`）。別モデルに差し替える場合はここと [app/api_client.py](../app/api_client.py) の定数の整合を確認。
+- 既定の LLM は [app/ai/routing.py](../app/ai/routing.py) の `ROUTES` で工程ごとに固定（例: OpenAI `gpt-5.5`、Anthropic `claude-sonnet-4-6`、フォールバック時の Gemini `gemini-3-pro-preview`）。変更する場合は同ファイルと [app/api_client.py](../app/api_client.py) 先頭の `TEXT_MODEL` / `IMAGE_MODEL`（`text_model` / `image_model` の再エクスポート）の整合を確認。
 - **`VALID_BLOCKS`**: `draw_plane` 等の `enum` と一致させる。ブロック ID を増やすときはここと各ツール内の許容マテリアルも確認。
 
 ### 6.2 Carpenter と `TOOL_REGISTRY`

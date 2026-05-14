@@ -17,6 +17,7 @@ if current_dir not in sys.path:
     sys.path.append(current_dir)
 
 from api_client import GeminiClient
+from ai.routing import AIStage, Provider, effective_route
 from meshy_client import MeshyClient
 # Legacy voxelizer import commented out
 # from voxelizer import Voxelizer
@@ -301,7 +302,17 @@ elif st.session_state.phase == 1:
         prompt = st.text_area("街のコンセプトを入力", height=150, placeholder="例：魔法使いが住むかっこいいお城")
         if st.button("コンセプト生成"):
             if prompt:
-                with st.spinner("Gemini Brain is refining the concept..."):
+                _cr = effective_route(AIStage.CONCEPT_BRAIN)
+                _spin = (
+                    "Gemini でコンセプトを洗練しています..."
+                    if _cr.provider == Provider.GOOGLE
+                    else (
+                        "Claude でコンセプトを洗練しています..."
+                        if _cr.provider == Provider.ANTHROPIC
+                        else "OpenAI でコンセプトを洗練しています..."
+                    )
+                )
+                with st.spinner(_spin):
                     # 1. Refine Prompt (Text Interaction)
                     # Returns dict: {"reasoning": "...", "image_prompt": "..."}
                     try:
