@@ -24,6 +24,7 @@ docker compose up --build -d
 
 - **UI**: [http://localhost:8501](http://localhost:8501)
 - **プロジェクトデータ**: ホストの `./projects` がコンテナの `/app/projects` にマウントされます。
+- **権限（PermissionError）**: 以前に **root で動いていた Docker** が `projects/` 内を `root` 所有で作ると、ホストで **`make run` など一般ユーザー**から `concept_input.txt` 等へ書けず `Permission denied` になります。ホストで `make fix-projects-perms`（`sudo chown`）を一度実行するか、`.env` の `DOCKER_UID` / `DOCKER_GID` を `id -u` / `id -g` に合わせてから `docker compose build --no-cache` し直してください（[Dockerfile](Dockerfile) は非 root で起動します）。
 - **ホスト上の Minecraft（RCON）**へ接続する場合は `.env` で `RCON_HOST=host.docker.internal` を推奨します（`docker-compose.yml` で Linux 向け `extra_hosts` を設定済みです）。
 
 停止・削除:

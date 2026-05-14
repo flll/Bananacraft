@@ -6,7 +6,7 @@ VENV    ?= venv
 PIP      = $(VENV)/bin/pip
 STREAMLIT = $(VENV)/bin/streamlit
 
-.PHONY: help install npm-install run docker-build docker-up docker-down docker-logs docker-ps env-example
+.PHONY: help install npm-install run docker-build docker-up docker-down docker-logs docker-ps env-example fix-projects-perms
 
 help:
 	@echo "Bananacraft — make ターゲット"
@@ -24,10 +24,15 @@ help:
 	@echo "    make docker-ps     docker compose ps"
 	@echo ""
 	@echo "  その他"
-	@echo "    make env-example   .env が無ければ .env.example をコピー（既にある場合は何もしない）"
+	@echo "    make env-example        .env が無ければ .env.example をコピー（既にある場合は何もしない）"
+	@echo "    make fix-projects-perms projects/ を現在ユーザーに chown（Docker root 混在で PermissionError のとき）"
 
 env-example:
 	@test -f .env || cp .env.example .env
+
+fix-projects-perms:
+	@test -d projects || mkdir -p projects
+	sudo chown -R $$(id -u):$$(id -g) projects
 
 install: env-example
 	@test -d $(VENV) || $(PYTHON) -m venv $(VENV)

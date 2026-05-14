@@ -26,6 +26,14 @@ COPY --from=carpenter /build ./AI_Carpenter_Bot
 
 RUN mkdir -p projects
 
+# ホストの ./projects マウントと所有者を揃える（ローカル streamlit と混在しにくい）
+ARG APP_UID=1000
+ARG APP_GID=1000
+RUN groupadd -g "${APP_GID}" bananacraft \
+    && useradd --no-log-init -m -u "${APP_UID}" -g bananacraft bananacraft \
+    && chown -R bananacraft:bananacraft /app
+USER bananacraft
+
 EXPOSE 8501
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
