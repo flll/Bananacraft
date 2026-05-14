@@ -198,9 +198,8 @@ flowchart TB
 | 変数 | 用途 |
 |------|------|
 | `GEMINI_API_KEY` | 画像生成（必須寄り）および OpenAI/Anthropic 未設定時の **全工程フォールバック** |
-| `GEMINI_API_KEY_IMAGE` | 画像工程専用（未設定時は `GEMINI_API_KEY`） |
-| `OPENAI_API_KEY` / `OPENAI_API_KEY_ZONING` / `OPENAI_API_KEY_ARCHITECT_*` / `OPENAI_API_KEY_INFRA` | 区画 JSON・躯体画像解析・建築 FC・インフラ FC（未設定時は Gemini に切替） |
-| `ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY_CONCEPT` / `ANTHROPIC_API_KEY_DECORATOR` | コンセプト対話・装飾 FC（未設定時は Gemini） |
+| `OPENAI_API_KEY` | 区画 JSON・躯体画像解析・建築 FC・インフラ FC（未設定時は Gemini に切替） |
+| `ANTHROPIC_API_KEY` | コンセプト対話・装飾 FC（未設定時は Gemini） |
 | `RCON_HOST` | 既定 `localhost` — [app/rcon_client.py](../app/rcon_client.py) |
 | `RCON_PORT` | 既定 `25575` |
 | `RCON_PASSWORD` | RCON ログイン |

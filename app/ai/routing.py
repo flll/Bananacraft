@@ -1,8 +1,9 @@
 """
 Bananacraft — 工程ごとの AI ルーティング（Google / OpenAI / Anthropic）
 
-キー解決: key_store ランタイム > OS 環境変数。専用キーが無い場合は GEMINI_API_KEY へ
-フォールバックし、プロバイダも Google に切り替える（単一キー運用互換）。
+キー解決: key_store ランタイム > OS 環境変数。プロバイダごとに 1 本
+（GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY）。OpenAI または
+Anthropic のキーが無い工程は Gemini に切り替える。
 
 BFCL（Function Calling 比較）: https://gorilla.cs.berkeley.edu/leaderboard.html
 """
@@ -53,52 +54,52 @@ _CLAUDE = "claude-3-5-sonnet-20241022"
 ROUTES: Final[dict[AIStage, StageRoute]] = {
     AIStage.CONCEPT_BRAIN: StageRoute(
         Provider.ANTHROPIC,
-        "ANTHROPIC_API_KEY_CONCEPT",
+        "ANTHROPIC_API_KEY",
         _CLAUDE,
-        ("ANTHROPIC_API_KEY",),
+        (),
         notes="長文対話＋JSON 出力で Claude 3.5 Sonnet を既定。キー無し時は Gemini。",
     ),
     AIStage.IMAGE_RENDER: StageRoute(
         Provider.GOOGLE,
-        "GEMINI_API_KEY_IMAGE",
+        "GEMINI_API_KEY",
         _GEM_TEXT,
-        ("GEMINI_API_KEY",),
+        (),
         image_model_id=_GEM_IMG,
         notes="参照画像付き生成は Gemini 画像モデル。",
     ),
     AIStage.ZONING_PLAN: StageRoute(
         Provider.OPENAI,
-        "OPENAI_API_KEY_ZONING",
+        "OPENAI_API_KEY",
         _OAI_JSON,
-        ("OPENAI_API_KEY",),
+        (),
         notes="BFCL 参考: https://gorilla.cs.berkeley.edu/leaderboard.html — 構造化 JSON で gpt-4.1。キー無し時は Gemini。",
     ),
     AIStage.ARCHITECT_VISION: StageRoute(
         Provider.OPENAI,
-        "OPENAI_API_KEY_ARCHITECT_VISION",
+        "OPENAI_API_KEY",
         _OAI_VISION,
-        ("OPENAI_API_KEY",),
+        (),
         notes="マルチモーダル解析に gpt-4o。",
     ),
     AIStage.ARCHITECT_BUILD: StageRoute(
         Provider.OPENAI,
-        "OPENAI_API_KEY_ARCHITECT_BUILD",
+        "OPENAI_API_KEY",
         _OAI_JSON,
-        ("OPENAI_API_KEY",),
+        (),
         notes="BFCL FC 系で gpt-4.1 を既定。",
     ),
     AIStage.INFRASTRUCTURE: StageRoute(
         Provider.OPENAI,
-        "OPENAI_API_KEY_INFRA",
+        "OPENAI_API_KEY",
         _OAI_JSON,
-        ("OPENAI_API_KEY",),
+        (),
         notes="BFCL FC 系で gpt-4.1（建築 Stage2 と揃えて挙動差分を抑制）。",
     ),
     AIStage.DECORATION: StageRoute(
         Provider.ANTHROPIC,
-        "ANTHROPIC_API_KEY_DECORATOR",
+        "ANTHROPIC_API_KEY",
         _CLAUDE,
-        ("ANTHROPIC_API_KEY",),
+        (),
         notes="画像＋tools: Claude 3.5 Sonnet。BFCL 参考: https://gorilla.cs.berkeley.edu/leaderboard.html 。キー無し時は Gemini。",
     ),
 }
@@ -111,14 +112,14 @@ def _gemini_route(stage: AIStage) -> StageRoute:
         Provider.GOOGLE,
         "GEMINI_API_KEY",
         _GEM_TEXT,
-        ("GEMINI_API_KEY",),
+        (),
         image_model_id=img if stage == AIStage.IMAGE_RENDER else None,
         notes="fallback_gemini",
     )
 
 
 def effective_route(stage: AIStage) -> StageRoute:
-    """専用キーが揃わない工程は Gemini に落とす。"""
+    """OpenAI/Anthropic のキーが解決できない工程は Gemini に落とす。"""
     base = ROUTES[stage]
     if base.provider == Provider.GOOGLE:
         return base
