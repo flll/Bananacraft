@@ -11,26 +11,35 @@ This is the deployment version of Bananacraft, stripped of legacy code and optim
 - **ブラウザ永続化**: Streamlit サイドバーから `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` を入力し、「ブラウザに保存」で **localStorage** に JSON 保存できます（依存: `streamlit-js-eval`）。**XSS があるページではキーが窃取されうる**ため、信頼できる環境でのみ利用し、本番ではサーバ側シークレットやプロキシ方式を推奨します。
 - **Function Calling のベンチマーク例**: [Berkeley Function Calling Leaderboard](https://gorilla.cs.berkeley.edu/leaderboard.html) をモデル選定の参考にし、リリース周期で `routing.py` の ID を見直してください。
 
-## Docker Compose（localhost / サーバ共通）
-
-リポジトリルートで次を実行します（初回はビルドに数分かかることがあります）。
+## 起動方法（Makefile）
 
 ```bash
 cp .env.example .env   # 未作成の場合
-# .env に GEMINI_API_KEY および RCON_* を設定
+# .env に GEMINI_API_KEY および RCON_PASSWORD を設定
 
-docker compose up --build -d
+make help            # ターゲット一覧
 ```
 
-- **UI**: [http://localhost:8501](http://localhost:8501)
-- **プロジェクトデータ**: ホストの `./projects` がコンテナの `/app/projects` にマウントされます。
-- **権限（PermissionError）**: 以前に **root で動いていた Docker** が `projects/` 内を `root` 所有で作ると、ホストで **`make run` など一般ユーザー**から `concept_input.txt` 等へ書けず `Permission denied` になります。ホストで `make fix-projects-perms`（`sudo chown`）を一度実行するか、`.env` の `DOCKER_UID` / `DOCKER_GID` を `id -u` / `id -g` に合わせてから `docker compose build --no-cache` し直してください（[Dockerfile](Dockerfile) は非 root で起動します）。
-- **ホスト上の Minecraft（RCON）**へ接続する場合は `.env` で `RCON_HOST=host.docker.internal` を推奨します（`docker-compose.yml` で Linux 向け `extra_hosts` を設定済みです）。
+| 用途 | コマンド |
+|------|----------|
+| **開発（おすすめ）** | `make mc-up` → `make run`（Minecraft は Docker、UI はホスト。コード変更がすぐ反映） |
+| **UI もコンテナ** | `make stack-up` |
+| **Minecraft のみ** | `make mc-up` / `make mc-down` / `make mc-logs` |
 
-停止・削除:
+- **UI**: [http://localhost:8501](http://localhost:8501)
+- **Minecraft**: `localhost:25565`（ゲーム）、RCON `localhost:25575`（`.env` の `RCON_PASSWORD`）
+- **ワールドデータ**: `./minecraft-data/`（Git 管理外）。詳細は [minecraft/README.md](minecraft/README.md)
+- **プロジェクトデータ**: `./projects`（`make run` はホスト、`make stack-up` はコンテナにマウント）
+- **権限（PermissionError）**: `make fix-projects-perms`、または `.env` の `DOCKER_UID` / `DOCKER_GID` を `id -u` / `id -g` に合わせて `docker compose build --no-cache`
+
+停止: `make stack-down` または `make mc-down`（Minecraft のみ）
+
+## Docker Compose（localhost / サーバ共通）
+
+`docker-compose.yml` には **minecraft**（[itzg/minecraft-server](https://hub.docker.com/r/itzg/minecraft-server)）と **bananacraft** の 2 サービスがあります。`make stack-up` と同等:
 
 ```bash
-docker compose down
+docker compose up --build -d
 ```
 
 ## 📦 Contents
@@ -60,8 +69,10 @@ nano .env
 *Set your `GEMINI_API_KEY`（最低限・画像とフォールバック用）および任意で `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`。詳細は `.env.example` と上記「API キーとマルチ LLM」を参照。*
 
 ### 4. Setup Minecraft Server
-Install your Minecraft Server separately (e.g., in `~/minecraft_server`).
-Make sure `server.properties` has:
+
+**Docker（推奨）**: リポジトリルートで `make mc-up` または `make stack-up`。RCON は `.env` の `RCON_PASSWORD` と自動で一致します。
+
+**手動**: 別途 `server.jar` を配置（例: `~/minecraft_server`）し、`server.properties` で次を設定:
 - `enable-rcon=true`
 - `rcon.port=25575`
 - `rcon.password` matching your .env

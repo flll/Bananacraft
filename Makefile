@@ -6,7 +6,10 @@ VENV    ?= venv
 PIP      = $(VENV)/bin/pip
 STREAMLIT = $(VENV)/bin/streamlit
 
-.PHONY: help install npm-install run docker-build docker-up docker-down docker-logs docker-ps env-example fix-projects-perms
+.PHONY: help install npm-install run \
+	docker-build docker-up docker-down docker-logs docker-ps \
+	mc-up mc-down mc-logs mc-ps stack-up stack-down \
+	env-example fix-projects-perms
 
 help:
 	@echo "Bananacraft — make ターゲット"
@@ -16,16 +19,25 @@ help:
 	@echo "    make npm-install  AI_Carpenter_Bot の npm install"
 	@echo "    make run          Streamlit を venv で起動（http://127.0.0.1:8501）"
 	@echo ""
-	@echo "  Docker（イメージに app が焼かれる。コード変更後は build が必要）"
-	@echo "    make docker-build  docker compose build"
-	@echo "    make docker-up     docker compose up --build -d"
-	@echo "    make docker-down   docker compose down"
+	@echo "  Minecraft（Docker / itzg/minecraft-server）"
+	@echo "    make mc-up        Minecraft のみ起動（25565 / RCON 25575）"
+	@echo "    make mc-down      Minecraft を停止"
+	@echo "    make mc-logs      Minecraft のログを追跡"
+	@echo "    make mc-ps        Minecraft コンテナの状態"
+	@echo "    推奨: make mc-up → make run（UI はホスト、MC は Docker）"
+	@echo ""
+	@echo "  Docker Bananacraft（イメージに app が焼かれる。コード変更後は build が必要）"
+	@echo "    make docker-build  docker compose build bananacraft"
+	@echo "    make docker-up     Bananacraft 起動（Minecraft も depends_on で起動）"
+	@echo "    make stack-up      Minecraft + Bananacraft を一括起動"
+	@echo "    make stack-down    全 Compose サービスを停止・削除"
+	@echo "    make docker-down   stack-down と同じ"
 	@echo "    make docker-logs   docker compose logs -f"
 	@echo "    make docker-ps     docker compose ps"
 	@echo ""
 	@echo "  その他"
-	@echo "    make env-example        .env が無ければ .env.example をコピー（既にある場合は何もしない）"
-	@echo "    make fix-projects-perms projects/ を現在ユーザーに chown（Docker root 混在で PermissionError のとき）"
+	@echo "    make env-example        .env が無ければ .env.example をコピー"
+	@echo "    make fix-projects-perms projects/ を現在ユーザーに chown"
 
 env-example:
 	@test -f .env || cp .env.example .env
@@ -46,14 +58,31 @@ run: env-example
 	@test -x $(STREAMLIT) || (echo "先に: make install" >&2; exit 1)
 	$(STREAMLIT) run app/main.py --server.port=8501
 
-docker-build:
-	docker compose build
+mc-up: env-example
+	docker compose up -d minecraft
 
-docker-up: env-example
+mc-down:
+	docker compose stop minecraft
+
+mc-logs:
+	docker compose logs -f minecraft
+
+mc-ps:
+	docker compose ps minecraft
+
+stack-up: env-example
 	docker compose up --build -d
 
-docker-down:
+stack-down:
 	docker compose down
+
+docker-build:
+	docker compose build bananacraft
+
+docker-up: env-example
+	docker compose up --build -d bananacraft
+
+docker-down: stack-down
 
 docker-logs:
 	docker compose logs -f

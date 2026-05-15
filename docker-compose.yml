@@ -1,15 +1,42 @@
 # Bananacraft — localhost / 本番兼用の Compose 定義
-# 使い方: cp .env.example .env を編集してから
-#   docker compose up --build -d
+# 使い方:
+#   make mc-up      … Minecraft のみ（make run と組み合わせる開発向け）
+#   make stack-up   … Minecraft + Bananacraft UI
+#   make docker-up  … Bananacraft のみ起動（depends_on で Minecraft も自動起動）
 # UI: http://localhost:8501
-#
-# Minecraft の RCON がホスト上にある場合は .env の RCON_HOST を
-# host.docker.internal にし（Linux は下記 extra_hosts 済み）、
-# コンテナからホストの RCON ポートへ届くようにしてください。
+# ゲーム: localhost:25565 / RCON: localhost:25575（ホストから make run 時）
 
 name: bananacraft
 
 services:
+  minecraft:
+    image: itzg/minecraft-server:latest
+    container_name: bananacraft-minecraft
+    ports:
+      - "25565:25565"
+      - "25575:25575"
+    environment:
+      EULA: "TRUE"
+      TYPE: ${MC_TYPE:-VANILLA}
+      VERSION: ${MC_VERSION:-LATEST}
+      MEMORY: ${MC_MEMORY:-4G}
+      ENABLE_RCON: "TRUE"
+      RCON_PASSWORD: ${RCON_PASSWORD:-bananacraft}
+      RCON_PORT: "25575"
+      ONLINE_MODE: ${MC_ONLINE_MODE:-FALSE}
+      MAX_PLAYERS: ${MC_MAX_PLAYERS:-10}
+      DIFFICULTY: ${MC_DIFFICULTY:-normal}
+      LEVEL_TYPE: ${MC_LEVEL_TYPE:-minecraft:normal}
+    volumes:
+      - ./minecraft-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: mc-health
+      start_period: 120s
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
   bananacraft:
     build:
       context: .
@@ -19,15 +46,18 @@ services:
         APP_GID: ${DOCKER_GID:-1000}
     image: bananacraft:latest
     container_name: bananacraft
+    depends_on:
+      minecraft:
+        condition: service_healthy
     ports:
       - "8501:8501"
     env_file:
       - .env
     environment:
-      # ホスト上の Minecraft RCON へ接続するときの既定（.env で上書き可）
-      RCON_HOST: ${RCON_HOST:-host.docker.internal}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      # Compose 内の Minecraft サービスへ RCON（ホストの make run では .env の RCON_HOST=localhost）
+      RCON_HOST: minecraft
+      RCON_PORT: ${RCON_PORT:-25575}
+      RCON_PASSWORD: ${RCON_PASSWORD:-bananacraft}
     volumes:
       - ./projects:/app/projects
     restart: unless-stopped

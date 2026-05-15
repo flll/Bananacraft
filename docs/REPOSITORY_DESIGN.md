@@ -214,9 +214,11 @@ flowchart TB
 ## 9. デプロイと運用
 
 - [setup.sh](../setup.sh): 仮想環境・依存関係・Streamlit 等の一括セットアップ。
+- [docker-compose.yml](../docker-compose.yml): **`minecraft`**（[itzg/minecraft-server](https://hub.docker.com/r/itzg/minecraft-server)、RCON 有効、データは `./minecraft-data`）と **`bananacraft`**（Streamlit）。[Makefile](../Makefile) の `make mc-up` / `make stack-up` / `make run` で運用を切り替える。
+- [minecraft/README.md](../minecraft/README.md): Docker MC のポート・初回起動メモ。
 - [deployment/bananacraft.service](../deployment/bananacraft.service): `streamlit run app/main.py --server.port 8501`。`User` / `WorkingDirectory` / `ExecStart` のパスは **実環境のユーザー名に合わせて編集**すること。
-- [deployment/minecraft.service](../deployment/minecraft.service): Minecraft サーバ用（同様にパス調整）。
-- Minecraft 側では `server.properties` で RCON を有効化し、`.env` のパスワードと一致させる（README 参照）。
+- [deployment/minecraft.service](../deployment/minecraft.service): 手動 `server.jar` 運用用（Docker を使う場合は不要）。
+- RCON: `.env` の `RCON_PASSWORD` を Docker MC（itzg）または手動 `server.properties` と一致させる。
 
 ---
 
