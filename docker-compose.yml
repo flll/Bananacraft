@@ -28,7 +28,7 @@ services:
       ONLINE_MODE: ${MC_ONLINE_MODE:-FALSE}
       MAX_PLAYERS: ${MC_MAX_PLAYERS:-10}
       DIFFICULTY: ${MC_DIFFICULTY:-normal}
-      MODRINTH_PROJECTS: essentialsx,worldedit
+      MODRINTH_PROJECTS: worldedit
       MODRINTH_ALLOWED_VERSION_TYPE: release
     volumes:
       - ./minecraft-data:/data
