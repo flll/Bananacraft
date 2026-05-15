@@ -14,8 +14,8 @@ services:
     stdin_open: true
     tty: true
     ports:
-      - "28888:25565"
-      - "28889:25575"
+      - "28888:28888"
+      - "28889:28889"
     environment:
       EULA: "TRUE"
       TYPE: PURPUR
@@ -24,7 +24,8 @@ services:
       LEVEL_TYPE: FLAT
       ENABLE_RCON: "TRUE"
       RCON_PASSWORD: ${RCON_PASSWORD:-bananacraft}
-      RCON_PORT: "25575"
+      RCON_PORT: "28889"
+      SERVER_PORT: "28888"
       ONLINE_MODE: ${MC_ONLINE_MODE:-FALSE}
       MAX_PLAYERS: ${MC_MAX_PLAYERS:-10}
       DIFFICULTY: ${MC_DIFFICULTY:-normal}
