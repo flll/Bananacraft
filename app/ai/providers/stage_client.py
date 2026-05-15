@@ -25,6 +25,12 @@ def _openai_client(api_key: str):
     return OpenAI(api_key=api_key)
 
 
+def _openai_temperature_fixed(model: str) -> bool:
+    """GPT-5 / o 系は temperature を 1 以外にできない（未指定で既定値）。"""
+    m = (model or "").lower()
+    return m.startswith("gpt-5") or m.startswith("o1") or m.startswith("o3") or m.startswith("o4")
+
+
 def _anthropic_client(api_key: str):
     from anthropic import Anthropic
 
@@ -63,11 +69,13 @@ def complete_text(
                 {"type": "text", "text": user},
                 {"type": "image_url", "image_url": {"url": f"data:{image_mime};base64,{b64}"}},
             ]
-        r = cli.chat.completions.create(
-            model=model,
-            temperature=temperature,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user_content}],
-        )
+        oai_kwargs: Dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user_content}],
+        }
+        if not _openai_temperature_fixed(model):
+            oai_kwargs["temperature"] = temperature
+        r = cli.chat.completions.create(**oai_kwargs)
         return r.choices[0].message.content or ""
 
     if route.provider == Provider.ANTHROPIC:
@@ -137,15 +145,17 @@ def complete_json(
                 {"type": "text", "text": user},
                 {"type": "image_url", "image_url": {"url": f"data:{image_mime};base64,{b64}"}},
             ]
-        r = cli.chat.completions.create(
-            model=model,
-            temperature=temperature,
-            response_format={"type": "json_object"},
-            messages=[
+        oai_kwargs = {
+            "model": model,
+            "response_format": {"type": "json_object"},
+            "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_content},
             ],
-        )
+        }
+        if not _openai_temperature_fixed(model):
+            oai_kwargs["temperature"] = temperature
+        r = cli.chat.completions.create(**oai_kwargs)
         return r.choices[0].message.content or ""
 
     if route.provider == Provider.ANTHROPIC:
@@ -230,13 +240,15 @@ def complete_with_tools(
                 "content": _openai_user_content(user_text, image_bytes, image_mime),
             },
         ]
-        r = cli.chat.completions.create(
-            model=model,
-            temperature=temperature,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-        )
+        oai_kwargs = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+        }
+        if not _openai_temperature_fixed(model):
+            oai_kwargs["temperature"] = temperature
+        r = cli.chat.completions.create(**oai_kwargs)
         return _parse_openai_tool_response(r)
 
     if route.provider == Provider.ANTHROPIC:
