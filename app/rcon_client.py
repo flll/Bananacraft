@@ -99,7 +99,7 @@ class SimpleRcon:
 class RconClient:
     def __init__(self):
         self.host = os.getenv("RCON_HOST", "localhost")
-        self.port = int(os.getenv("RCON_PORT", 25575))
+        self.port = int(os.getenv("RCON_PORT", 28889))
         self.password = os.getenv("RCON_PASSWORD", "")
         
     def connect_and_send(self, commands):

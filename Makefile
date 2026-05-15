@@ -1,5 +1,4 @@
 # Bananacraft — よく使うコマンド（リポジトリルートで実行）
-# https://www.gnu.org/software/make/manual/html_node/Phony-Targets.html
 
 PYTHON  ?= python3
 VENV    ?= venv
@@ -8,7 +7,7 @@ STREAMLIT = $(VENV)/bin/streamlit
 
 .PHONY: help install npm-install run \
 	docker-build docker-up docker-down docker-logs docker-ps \
-	mc-up mc-down mc-logs mc-ps stack-up stack-down \
+	mc-up mc-down mc-logs mc-ps mc-attach mc-reset stack-up stack-down \
 	env-example fix-projects-perms
 
 help:
@@ -19,14 +18,16 @@ help:
 	@echo "    make npm-install  AI_Carpenter_Bot の npm install"
 	@echo "    make run          Streamlit を venv で起動（http://127.0.0.1:8501）"
 	@echo ""
-	@echo "  Minecraft（Docker / itzg/minecraft-server）"
-	@echo "    make mc-up        Minecraft のみ起動（25565 / RCON 25575）"
+	@echo "  Minecraft（Docker / Purpur 26.1.2 / ゲーム :28888 / RCON :28889）"
+	@echo "    make mc-up        Minecraft のみ起動"
 	@echo "    make mc-down      Minecraft を停止"
 	@echo "    make mc-logs      Minecraft のログを追跡"
 	@echo "    make mc-ps        Minecraft コンテナの状態"
-	@echo "    推奨: make mc-up → make run（UI はホスト、MC は Docker）"
+	@echo "    make mc-attach    サーバーコンソールへ接続（デタッチ: Ctrl+P → Ctrl+Q）"
+	@echo "    make mc-reset     minecraft-data を削除（Purpur 初回・設定変更時）"
+	@echo "    推奨: make mc-reset → make mc-up → make run"
 	@echo ""
-	@echo "  Docker Bananacraft（イメージに app が焼かれる。コード変更後は build が必要）"
+	@echo "  Docker Bananacraft（コード変更後は build が必要）"
 	@echo "    make docker-build  docker compose build bananacraft"
 	@echo "    make docker-up     Bananacraft 起動（Minecraft も depends_on で起動）"
 	@echo "    make stack-up      Minecraft + Bananacraft を一括起動"
@@ -69,6 +70,15 @@ mc-logs:
 
 mc-ps:
 	docker compose ps minecraft
+
+mc-attach:
+	@test -n "$$(docker compose ps -q minecraft 2>/dev/null)" || (echo "先に: make mc-up" >&2; exit 1)
+	docker attach bananacraft-minecraft
+
+mc-reset:
+	@echo "WARNING: ./minecraft-data を削除します（ワールド・プラグイン・設定）"
+	@read -p "続行? [y/N] " ans && test "$$ans" = y
+	rm -rf minecraft-data
 
 stack-up: env-example
 	docker compose up --build -d

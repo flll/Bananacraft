@@ -521,7 +521,7 @@ elif st.session_state.phase == 1:
                                 plan = fm.load_json("infrastructure.json")
                                 # Convert tool names back if needed, but build_from_json handles 'tool_name'
                                 rcon_ip = os.getenv("RCON_HOST", "localhost")
-                                rcon_port = int(os.getenv("RCON_PORT", 25575))
+                                rcon_port = int(os.getenv("RCON_PORT", 28889))
                                 rcon_pass = os.getenv("RCON_PASSWORD", "")
                                 
                                 # Use Carpenter directly via Session or Function

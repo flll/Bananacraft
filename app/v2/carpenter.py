@@ -125,12 +125,14 @@ class CarpenterSession:
         if target_file:
             cmd.append(target_file)
 
+        bot_env = os.environ.copy()
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            cwd=bot_dir # Run from bot dir so it finds node_modules
+            cwd=bot_dir,
+            env=bot_env,
         )
         
         stdout, stderr = process.communicate()

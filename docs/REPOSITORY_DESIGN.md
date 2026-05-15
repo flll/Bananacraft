@@ -176,7 +176,7 @@ flowchart TB
 ## 7. Mineflayer ボット
 
 - 実装: [AI_Carpenter_Bot/index.js](../AI_Carpenter_Bot/index.js)
-- **接続先**: `host: 'localhost'`, `port: 25565` にハードコード。リモートサーバや別ポートのときはコード変更が必要。
+- **接続先**: 環境変数 `MC_HOST`（既定 `localhost`）、`MC_PORT`（既定 **28888**）— [AI_Carpenter_Bot/index.js](../AI_Carpenter_Bot/index.js)。`run_bot` は親の `os.environ` を subprocess に渡す。
 - **引数**: `node index.js <PROJECT_NAME> [OriginX OriginY OriginZ] [FILENAME]`
 - **入力ファイル**: `../projects/<PROJECT_NAME>/<FILENAME>`（既定 `decoration.json`）。中身は **`{ "instructions": [ ... ] }`** を想定。各要素は少なくとも `setblock` 用の `x,y,z,block`（および `action`）形式。
 - Streamlit からは [app/v2/carpenter.py](../app/v2/carpenter.py) の `CarpenterSession.run_bot` が `cwd=AI_Carpenter_Bot` で `subprocess` 実行。
@@ -201,7 +201,8 @@ flowchart TB
 | `OPENAI_API_KEY` | 区画 JSON・躯体画像解析・建築 FC・インフラ FC（未設定時は Gemini に切替） |
 | `ANTHROPIC_API_KEY` | コンセプト対話・装飾 FC（未設定時は Gemini） |
 | `RCON_HOST` | 既定 `localhost` — [app/rcon_client.py](../app/rcon_client.py) |
-| `RCON_PORT` | 既定 `25575` |
+| `RCON_PORT` | 既定 **28889**（Docker MC のホスト公開ポート） |
+| `MC_HOST` / `MC_PORT` | Mineflayer ボット接続先（既定 `localhost` / **28888**） |
 | `RCON_PASSWORD` | RCON ログイン |
 | `STREAMLIT_PASSWORD` | 設定時のみログイン gate — [app/main.py](../app/main.py) `check_password` |
 
@@ -214,8 +215,8 @@ flowchart TB
 ## 9. デプロイと運用
 
 - [setup.sh](../setup.sh): 仮想環境・依存関係・Streamlit 等の一括セットアップ。
-- [docker-compose.yml](../docker-compose.yml): **`minecraft`**（[itzg/minecraft-server](https://hub.docker.com/r/itzg/minecraft-server)、RCON 有効、データは `./minecraft-data`）と **`bananacraft`**（Streamlit）。[Makefile](../Makefile) の `make mc-up` / `make stack-up` / `make run` で運用を切り替える。
-- [minecraft/README.md](../minecraft/README.md): Docker MC のポート・初回起動メモ。
+- [docker-compose.yml](../docker-compose.yml): **`minecraft`**（Purpur **26.1.2**、フラット、Modrinth: EssentialsX / WorldEdit、ホスト **28888** / **28889**）と **`bananacraft`**。[Makefile](../Makefile): `make mc-up` / `make mc-attach` / `make mc-reset` / `make stack-up` / `make run`。
+- [minecraft/README.md](../minecraft/README.md): ポート・プラグイン・移行手順。
 - [deployment/bananacraft.service](../deployment/bananacraft.service): `streamlit run app/main.py --server.port 8501`。`User` / `WorkingDirectory` / `ExecStart` のパスは **実環境のユーザー名に合わせて編集**すること。
 - [deployment/minecraft.service](../deployment/minecraft.service): 手動 `server.jar` 運用用（Docker を使う場合は不要）。
 - RCON: `.env` の `RCON_PASSWORD` を Docker MC（itzg）または手動 `server.properties` と一致させる。

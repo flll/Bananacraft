@@ -1,10 +1,9 @@
 # Bananacraft — localhost / 本番兼用の Compose 定義
 # 使い方:
-#   make mc-up      … Minecraft のみ（make run と組み合わせる開発向け）
+#   make mc-up      … Purpur Minecraft のみ（ゲーム :28888 / RCON :28889）
+#   make mc-attach  … サーバーコンソールへ接続（デタッチ: Ctrl+P, Ctrl+Q）
 #   make stack-up   … Minecraft + Bananacraft UI
-#   make docker-up  … Bananacraft のみ起動（depends_on で Minecraft も自動起動）
 # UI: http://localhost:8501
-# ゲーム: localhost:25565 / RCON: localhost:25575（ホストから make run 時）
 
 name: bananacraft
 
@@ -12,27 +11,31 @@ services:
   minecraft:
     image: itzg/minecraft-server:latest
     container_name: bananacraft-minecraft
+    stdin_open: true
+    tty: true
     ports:
-      - "25565:25565"
-      - "25575:25575"
+      - "28888:25565"
+      - "28889:25575"
     environment:
       EULA: "TRUE"
-      TYPE: ${MC_TYPE:-VANILLA}
-      VERSION: ${MC_VERSION:-LATEST}
+      TYPE: PURPUR
+      VERSION: "26.1.2"
       MEMORY: ${MC_MEMORY:-4G}
+      LEVEL_TYPE: FLAT
       ENABLE_RCON: "TRUE"
       RCON_PASSWORD: ${RCON_PASSWORD:-bananacraft}
       RCON_PORT: "25575"
       ONLINE_MODE: ${MC_ONLINE_MODE:-FALSE}
       MAX_PLAYERS: ${MC_MAX_PLAYERS:-10}
       DIFFICULTY: ${MC_DIFFICULTY:-normal}
-      LEVEL_TYPE: ${MC_LEVEL_TYPE:-minecraft:normal}
+      MODRINTH_PROJECTS: essentialsx,worldedit
+      MODRINTH_ALLOWED_VERSION_TYPE: release
     volumes:
       - ./minecraft-data:/data
     restart: unless-stopped
     healthcheck:
       test: mc-health
-      start_period: 120s
+      start_period: 180s
       interval: 30s
       timeout: 10s
       retries: 5
@@ -54,9 +57,8 @@ services:
     env_file:
       - .env
     environment:
-      # Compose 内の Minecraft サービスへ RCON（ホストの make run では .env の RCON_HOST=localhost）
       RCON_HOST: minecraft
-      RCON_PORT: ${RCON_PORT:-25575}
+      RCON_PORT: "25575"
       RCON_PASSWORD: ${RCON_PASSWORD:-bananacraft}
     volumes:
       - ./projects:/app/projects

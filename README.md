@@ -22,12 +22,12 @@ make help            # ターゲット一覧
 
 | 用途 | コマンド |
 |------|----------|
-| **開発（おすすめ）** | `make mc-up` → `make run`（Minecraft は Docker、UI はホスト。コード変更がすぐ反映） |
+| **開発（おすすめ）** | `make mc-reset`（初回）→ `make mc-up` → `make run` |
 | **UI もコンテナ** | `make stack-up` |
-| **Minecraft のみ** | `make mc-up` / `make mc-down` / `make mc-logs` |
+| **Minecraft のみ** | `make mc-up` / `make mc-down` / `make mc-logs` / `make mc-attach` |
 
 - **UI**: [http://localhost:8501](http://localhost:8501)
-- **Minecraft**: `localhost:25565`（ゲーム）、RCON `localhost:25575`（`.env` の `RCON_PASSWORD`）
+- **Minecraft**: Purpur **26.1.2**・フラットワールド。ゲーム **`localhost:28888`**、RCON **`localhost:28889`**（`.env` の `RCON_PASSWORD`）
 - **ワールドデータ**: `./minecraft-data/`（Git 管理外）。詳細は [minecraft/README.md](minecraft/README.md)
 - **プロジェクトデータ**: `./projects`（`make run` はホスト、`make stack-up` はコンテナにマウント）
 - **権限（PermissionError）**: `make fix-projects-perms`、または `.env` の `DOCKER_UID` / `DOCKER_GID` を `id -u` / `id -g` に合わせて `docker compose build --no-cache`
@@ -36,7 +36,7 @@ make help            # ターゲット一覧
 
 ## Docker Compose（localhost / サーバ共通）
 
-`docker-compose.yml` には **minecraft**（[itzg/minecraft-server](https://hub.docker.com/r/itzg/minecraft-server)）と **bananacraft** の 2 サービスがあります。`make stack-up` と同等:
+`docker-compose.yml` には **minecraft**（Purpur 26.1.2 + EssentialsX / WorldEdit、[itzg/minecraft-server](https://hub.docker.com/r/itzg/minecraft-server)）と **bananacraft** の 2 サービスがあります。`make stack-up` と同等:
 
 ```bash
 docker compose up --build -d
@@ -70,12 +70,9 @@ nano .env
 
 ### 4. Setup Minecraft Server
 
-**Docker（推奨）**: リポジトリルートで `make mc-up` または `make stack-up`。RCON は `.env` の `RCON_PASSWORD` と自動で一致します。
+**Docker（推奨）**: `make mc-reset`（初回）→ `make mc-up`。Purpur 26.1.2・フラット・プラグイン付き。ポート **28888** / **28889**。
 
-**手動**: 別途 `server.jar` を配置（例: `~/minecraft_server`）し、`server.properties` で次を設定:
-- `enable-rcon=true`
-- `rcon.port=25575`
-- `rcon.password` matching your .env
+**手動**: 別途 `server.jar` を配置し、`server.properties` で RCON を有効化。`.env` の `RCON_PORT` / `MC_PORT` を手動サーバーのポートに合わせる。
 
 ### 5. Auto-Start Service
 Link the systemd services:

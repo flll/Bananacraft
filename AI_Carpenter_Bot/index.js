@@ -33,8 +33,8 @@ const instructions = plan.instructions || []
 console.log(`Found ${instructions.length} instructions.`)
 
 const bot = mineflayer.createBot({
-    host: 'localhost',
-    port: 25565,
+    host: process.env.MC_HOST || 'localhost',
+    port: parseInt(process.env.MC_PORT || '28888', 10),
     username: 'AI_Carpenter'
 })
 
