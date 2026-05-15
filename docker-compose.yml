@@ -24,7 +24,7 @@ services:
       LEVEL_TYPE: FLAT
       ENABLE_RCON: "TRUE"
       RCON_PASSWORD: ${RCON_PASSWORD:-bananacraft}
-      RCON_PORT: "28889"
+      RCON_PORT: ${RCON_PORT:-28889}
       SERVER_PORT: "28888"
       ONLINE_MODE: ${MC_ONLINE_MODE:-FALSE}
       MAX_PLAYERS: ${MC_MAX_PLAYERS:-10}
@@ -58,8 +58,8 @@ services:
     env_file:
       - .env
     environment:
-      RCON_HOST: minecraft
-      RCON_PORT: "25575"
+      RCON_HOST: ${RCON_HOST:-localhost}
+      RCON_PORT: ${RCON_PORT:-28889}
       RCON_PASSWORD: ${RCON_PASSWORD:-bananacraft}
     volumes:
       - ./projects:/app/projects
