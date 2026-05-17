@@ -4,11 +4,25 @@ This is the deployment version of Bananacraft, stripped of legacy code and optim
 
 開発者向けのリポジトリ設計・データフロー・改修ガイドは [docs/REPOSITORY_DESIGN.md](docs/REPOSITORY_DESIGN.md) を参照してください。
 
+## アプリの流れ（UI v2）
+
+`st.navigation` ベースのマルチページ構成で、画面上部の **横ステッパー** が常に現在地を示します。
+
+| Step | ページ | 何をする |
+|------|-------|---------|
+| 1. Setup    | [`app/pages_v2/setup.py`](app/pages_v2/setup.py)       | プロジェクト作成 / 既存を開く |
+| 2. Concept  | [`app/pages_v2/concept.py`](app/pages_v2/concept.py)   | コンセプト文 → AI が街のコンセプトアートを生成 / 反復改善 |
+| 3. City Plan| [`app/pages_v2/city_plan.py`](app/pages_v2/city_plan.py) | ゾーニング・インフラ（道路 / 広場）生成と Building List |
+| 4. Building | [`app/pages_v2/building.py`](app/pages_v2/building.py) | 個別建物の **Design → Blueprint → Build → Decorate**（縦サブステッパー）|
+| Settings    | [`app/pages_v2/settings.py`](app/pages_v2/settings.py) | API キー / Origin XYZ / Terraformer / プロジェクトリセット |
+
+共通 UI コンポーネントは [`app/ui/`](app/ui/) に集約されています（stepper, breadcrumbs, buttons, status_card, feature_card, theme, onboarding, state）。
+
 ## API キーとマルチ LLM
 
-- **既定割当**: 区画 JSON・建築／インフラの Function Calling は OpenAI（`gpt-5.5`）、コンセプト対話と装飾は Anthropic（`claude-sonnet-4-6`）、参照付き画像生成は Google Gemini（`gemini-3-pro-preview` / `gemini-3-pro-image-preview`）。実装は [app/ai/routing.py](app/ai/routing.py) で固定されています。
-- **単一キー運用**: `OPENAI_API_KEY` や `ANTHROPIC_API_KEY` が無くても、`GEMINI_API_KEY` のみで全工程が Gemini にフォールバックします。
-- **ブラウザ永続化**: Streamlit サイドバーから `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` を入力し、「ブラウザに保存」で **localStorage** に JSON 保存できます（依存: `streamlit-js-eval`）。**XSS があるページではキーが窃取されうる**ため、信頼できる環境でのみ利用し、本番ではサーバ側シークレットやプロキシ方式を推奨します。
+- **既定割当**: 区画 JSON・建築／インフラの Function Calling は OpenAI（`gpt-5.5`）、コンセプト対話と装飾は Anthropic（`claude-sonnet-4-6`）、参照付き画像生成は Google Gemini（`gemini-3-pro-preview` / `gemini-3-pro-image-preview`）、画像→3D メッシュは Tripo3D。実装は [app/ai/routing.py](app/ai/routing.py) で固定されています。
+- **単一キー運用**: `OPENAI_API_KEY` や `ANTHROPIC_API_KEY` が無くても、`GEMINI_API_KEY` のみで全工程が Gemini にフォールバックします。Mesh-First Architect だけは別途 `TRIPO_API_KEY`（`tsk_` で始まる）が必要です。
+- **設定場所**: 左サイドバーの **Settings ページ** からまとめて入力できます。「ブラウザに保存」で **localStorage** に JSON 保存（依存: `streamlit-js-eval`）。**XSS があるページではキーが窃取されうる**ため、信頼できる環境でのみ利用し、本番ではサーバ側シークレットやプロキシ方式を推奨します。
 - **Function Calling のベンチマーク例**: [Berkeley Function Calling Leaderboard](https://gorilla.cs.berkeley.edu/leaderboard.html) をモデル選定の参考にし、リリース周期で `routing.py` の ID を見直してください。
 
 ## 起動方法（Makefile）
@@ -96,5 +110,9 @@ sudo systemctl start bananacraft
 ```
 
 ## 🛠️ Usage
-Access the app at `http://<YOUR_GCE_IP>:8501`.
-- **Phase 3**: Click "Run AI Carpenter (Auto)" to spawn the builder bot.
+Access the app at `http://<YOUR_GCE_IP>:8501`. 4 ステップを順に進めてください：
+
+1. **Setup** — プロジェクト名を入力（または既存プロジェクトを開く）
+2. **Concept** — 一文の説明から AI がコンセプトアートを生成
+3. **City Plan** — ゾーニング & インフラを生成、Building List から建物を選択
+4. **Building** — Design → Blueprint（Tripo3D + voxel）→ Build（RCON）→ Decorate（AI Carpenter Bot）の縦サブステッパー

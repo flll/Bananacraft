@@ -1,0 +1,18 @@
+# Bananacraft - honey-themed Streamlit configuration
+# Streamlit 1.36+ で st.navigation / st.Page を使うため
+# baseweb のテーマ変数をここで定義する。CSS はあくまで補助。
+
+[theme]
+base = "dark"
+primaryColor = "#F39C12"
+backgroundColor = "#1A1108"
+secondaryBackgroundColor = "#2A1810"
+textColor = "#FAFAFA"
+font = "sans serif"
+
+[server]
+headless = true
+runOnSave = true
+
+[browser]
+gatherUsageStats = false

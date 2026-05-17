@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import glob
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+ProgressCallback = Callable[[str, Optional[str]], None]
+"""進捗報告コールバック。(label, detail) を受け取る。"""
 
 try:
     from file_manager import FileManager
@@ -117,7 +120,15 @@ class MeshArchitect:
         force: bool = False,
         skip_semantic: bool = False,
         trip_verbose: bool = False,
+        progress: Optional[ProgressCallback] = None,
     ) -> Dict[str, Any]:
+        def _p(label: str, detail: Optional[str] = None) -> None:
+            if progress is not None:
+                try:
+                    progress(label, detail)
+                except Exception:
+                    pass
+
         zone_id = building_info.get("id")
         if zone_id is None:
             raise ValueError("building_info に id (区画 ID) が必要です。")
@@ -137,9 +148,11 @@ class MeshArchitect:
             cached_mesh = None
 
         if cached_mesh is None:
+            _p("① 画像を Tripo3D に送信", "GLB 生成タスクを作成しています")
             client = TripoClient()
             task_id = client.create_image_task(image_path)
             trip_meta["task_id"] = task_id
+            _p("② Tripo3D で 3D メッシュを生成中", f"task_id = {task_id}（推定 60〜120 秒）")
             task = client.wait_for_task(task_id, verbose=trip_verbose)
             try:
                 self.fm.save_json(f"tripo_task_{zone_id}.json", task)
@@ -150,6 +163,7 @@ class MeshArchitect:
 
             url = TripoClient.model_url_from_task(task)
             trip_meta["model_url"] = url
+            _p("③ GLB をダウンロード", os.path.basename(url) if url else None)
             mesh_path = client.download_model(url, self.fm.project_dir, mesh_base)
             trip_meta["saved_path"] = mesh_path
             trip_meta["saved_ext"] = os.path.splitext(mesh_path)[1].lower()
@@ -157,10 +171,14 @@ class MeshArchitect:
             mesh_path = cached_mesh
             trip_meta["cached_mesh"] = mesh_path
             trip_meta["cached_ext"] = os.path.splitext(mesh_path)[1].lower()
+            _p("③ キャッシュ済み GLB を使用", os.path.basename(mesh_path))
 
+        _p("④ メッシュを読み込み", os.path.basename(mesh_path))
         mesh = load_mesh(mesh_path)
+        _p("⑤ ボクセル化", f"target voxel size = {target_voxel}")
         voxel_mesh = voxelize_mesh(mesh, target_size=target_voxel, constraint_axis="y")
 
+        _p("⑥ ブロック割当", "色をハチミツ系の Minecraft ブロックにマッチ中")
         assigner = BlockAssigner()
         # NOTE: BlockAssigner.assign_blocks の dithering は [0,255] スケール想定だが、
         # 内部の color は [0,1] スケールで渡されるため `ordered` を使うと値が飽和し、
@@ -178,6 +196,7 @@ class MeshArchitect:
 
         semantic_raw: Dict[str, Any] = {}
         if not skip_semantic:
+            _p("⑦ Gemini で窓・ドア等を推定", f"voxel count = {len(blocks)}")
             try:
                 semantic_raw = run_semantic_pass(image_path, blocks, building_info)
             except Exception as e:
@@ -189,6 +208,7 @@ class MeshArchitect:
         semantic = clamp_semantic_to_bbox(semantic_raw, bbox)
         blocks = _merge_block_overrides(blocks, semantic.get("block_overrides") or [])
 
+        _p("⑧ instructions を合成", f"{len(blocks)} blocks → 命令列")
         instructions = build_minimal_instructions(blocks, building_info, semantic)
 
         debug = {
