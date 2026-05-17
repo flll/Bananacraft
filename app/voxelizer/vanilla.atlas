@@ -2468,6 +2468,23 @@
             }
         },
         {
+            "name": "minecraft:honey_block",
+            "faces": {
+                "up": "minecraft:block/honey_block_top",
+                "down": "minecraft:block/honey_block_bottom",
+                "north": "minecraft:block/honey_block_side",
+                "south": "minecraft:block/honey_block_side",
+                "east": "minecraft:block/honey_block_side",
+                "west": "minecraft:block/honey_block_side"
+            },
+            "colour": {
+                "r": 0.9568627450980393,
+                "g": 0.7176470588235294,
+                "b": 0.10980392156862745,
+                "a": 0.9490196078431372
+            }
+        },
+        {
             "name": "minecraft:horn_coral_block",
             "faces": {
                 "up": "minecraft:block/horn_coral_block",

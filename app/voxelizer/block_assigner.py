@@ -145,6 +145,7 @@ class BlockAssigner:
         'minecraft:obsidian', 'minecraft:gold_block', 'minecraft:iron_block',
         'minecraft:diamond_block', 'minecraft:emerald_block', 'minecraft:lapis_block',
         'minecraft:quartz_block', 'minecraft:bone_block', 'minecraft:snow_block',
+        'minecraft:honeycomb_block', 'minecraft:honey_block',
     ]
     
     def __init__(

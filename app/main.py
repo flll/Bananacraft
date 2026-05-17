@@ -4,6 +4,7 @@ import pandas as pd
 import altair as alt
 import json
 import os
+import glob
 import requests
 import base64
 from dotenv import load_dotenv
@@ -18,14 +19,7 @@ if current_dir not in sys.path:
 
 from api_client import GeminiClient
 from ai.routing import AIStage, Provider, effective_route
-from meshy_client import MeshyClient
-# Legacy voxelizer import commented out
-# from voxelizer import Voxelizer
-
-# New BVH Ray-Cast Voxelizer
-from voxelizer.mesh_loader import load_mesh
-from voxelizer.bvh_ray_voxelizer import voxelize_mesh
-from voxelizer.block_assigner import BlockAssigner
+# Mesh-First Architect uses Tripo + voxelizer inside v2.mesh_architect
 import plotly.graph_objects as go
 import pandas as pd
 from file_manager import FileManager 
@@ -33,7 +27,7 @@ from rcon_client import RconClient
 from terraformer import Terraformer 
 
 # v2 Imports
-from v2.architect import Architect
+from v2.mesh_architect import MeshArchitect
 from v2.carpenter import CarpenterSession
 from v2.decorator import Decorator
 from v2.preview import create_3d_preview 
@@ -121,6 +115,13 @@ if "api_key_context" not in st.session_state:
 if not st.session_state.get("_browser_keys_hydrated"):
     st.session_state.api_key_context.update(load_persisted_keys())
     st.session_state._browser_keys_hydrated = True
+
+# Phase 1+ で FileManager があるのに Architect 未初期化（再訪問時など）
+if st.session_state.phase >= 1 and st.session_state.file_manager and st.session_state.architect is None:
+    try:
+        st.session_state.architect = MeshArchitect(st.session_state.file_manager)
+    except Exception:
+        pass
 with st.sidebar:
     st.title("🍌 Bananacraft")
     st.caption("AI都市開発システム")
@@ -263,7 +264,7 @@ if st.session_state.phase == 0:
 
                 # Initializing v2 Architect
                 try:
-                    st.session_state.architect = Architect()
+                    st.session_state.architect = MeshArchitect(st.session_state.file_manager)
                 except Exception as e:
                     st.error(f"Failed to initialize Architect: {e}")
 
@@ -696,138 +697,140 @@ elif st.session_state.phase == 2:
 
             if st.session_state.design_images and st.session_state.design_images.get('structure'):
                 st.markdown("---")
-                st.subheader("Architectural Planning (Gemini 3)")
-                
-                # Check for existing instruction
+                st.subheader("Architectural Planning (Mesh-First: Tripo3D + Gemini)")
+                st.caption(
+                    "Tripo3D で画像からメッシュ→ボクセル化し、Gemini で窓・ドア等を補完します。"
+                    " **TRIPO_API_KEY**（`tsk_`）と **GEMINI_API_KEY** が必要です。"
+                )
+
                 inst_file = f"building_{zone['id']}_instructions.json"
+                blocks_file = f"building_{zone['id']}_blocks_v2.json"
+                mesh_glob = os.path.join(fm.project_dir, f"mesh_{zone['id']}.*")
+
+                instructions = None
                 if fm.exists(inst_file):
                     try:
                         instructions = fm.load_json(inst_file)
-                        st.success("Architectural Blueprint Found!")
-                        st.json(instructions, expanded=False)
                     except Exception as e:
-                        st.warning(f"Corrupted blueprint found, resetting: {e}")
+                        st.warning(f"instructions の読み込みに失敗: {e}")
                         instructions = None
-                    
-                    if st.button("Regenerate Blueprint"):
-                         instructions = None # Force regen logic below
 
-                else:
-                    instructions = None
+                blocks = []
+                if fm.exists(blocks_file):
+                    try:
+                        blocks = fm.load_json(blocks_file) or []
+                    except Exception as e:
+                        st.warning(f"blocks の読み込みに失敗: {e}")
+                        blocks = []
 
-                if not instructions:
-                    if st.button("Create Blueprint (Analyze Structure)"):
-                         arc = st.session_state.architect
-                         if not arc:
-                             st.error("Architect not initialized.")
-                         else:
-                             with st.spinner("Gemini 3 is analyzing the structure..."):
-                                 # Prepare building info
-                                 b_info = {
-                                     "name": zone['name'],
-                                     "width": zone['position']['width'],
-                                     "depth": zone['position']['depth'],
-                                     "description": zone.get('description', '')
-                                 }
-                                 # Local path
-                                 s_path = st.session_state.design_images['structure']
-                                 
-                                 try:
-                                     # Stage 1: Analyze
-                                     analysis = arc.analyze_structure(s_path, b_info)
-                                     
-                                     # Stage 2: Plan (Generate Instructions)
-                                     instructions_list = arc.generate_from_structure(analysis, b_info)
-                                     
-                                     # Convert to serializable format
-                                     instructions = [i.to_dict() for i in instructions_list]
-                                     
-                                     # Debug: Show analysis
-                                     with st.expander("Debug: Gemini Analysis"):
-                                         st.json(analysis)
-                                         st.write("Generated Instructions count:", len(instructions))
-                                     
-                                     # Save
-                                     fm.save_json(inst_file, instructions)
-                                     st.success("Blueprint Created!")
-                                     st.rerun()
-                                 except Exception as e:
-                                     st.error(f"Planning Error: {e}")
+                if instructions is not None and blocks:
+                    st.success(
+                        f"ブループリント準備済み: **{len(blocks)}** blocks、"
+                        f"**{len(instructions)}** instruction ステップ。"
+                    )
+                    with st.expander("instructions.json", expanded=False):
+                        st.json(instructions, expanded=False)
+                elif instructions is not None and not blocks:
+                    st.warning("instructions のみあり blocks がありません。再生成してください。")
 
-                if instructions:
-                    st.markdown("---")
-                    st.subheader("Construction Planning (Carpenter)")
-                    
-                    # Check for existing blocks
-                    blocks_file = f"building_{zone['id']}_blocks_v2.json"
-                    blocks = []
-                    
-                    if fm.exists(blocks_file):
-                         blocks = fm.load_json(blocks_file)
-                         st.success(f"Construction Data Ready: {len(blocks)} blocks")
-                         
-                    if not blocks:
-                        if st.button("Generate Construction Data"):
+                col_rb, col_ft = st.columns(2)
+                with col_rb:
+                    regen = st.button("Regenerate Blueprint（キャッシュ削除）", key=f"regen_bp_{zone['id']}")
+                with col_ft:
+                    force_tripo = st.checkbox(
+                        "Tripo を必ず再実行（GLB 再生成）",
+                        value=False,
+                        key=f"force_tripo_{zone['id']}",
+                        help="チェック時はキャッシュ GLB があっても Tripo に再依頼します（クレジット消費）。",
+                    )
+
+                if regen:
+                    for pth in glob.glob(mesh_glob):
+                        if os.path.isfile(pth):
+                            os.remove(pth)
+                    for fn in (inst_file, blocks_file, f"tripo_task_{zone['id']}.json"):
+                        pth = fm.get_path(fn)
+                        if os.path.isfile(pth):
+                            os.remove(pth)
+                    st.rerun()
+
+                need_build = not (instructions is not None and blocks)
+                if need_build:
+                    if st.button("Create Blueprint (Tripo + Voxel + Semantic)", key=f"create_bp_{zone['id']}"):
+                        if not st.session_state.architect:
+                            st.session_state.architect = MeshArchitect(fm)
+                        arc = st.session_state.architect
+                        if not os.environ.get("TRIPO_API_KEY", "").strip():
+                            st.error(
+                                "TRIPO_API_KEY が未設定です。.env か環境変数に "
+                                "`tsk_` で始まるキーを設定してください。"
+                            )
+                        else:
+                            b_info = {
+                                "id": zone["id"],
+                                "name": zone["name"],
+                                "width": zone["position"]["width"],
+                                "depth": zone["position"]["depth"],
+                                "description": zone.get("description", ""),
+                                "facing": zone.get("facing", "south"),
+                            }
+                            s_path = st.session_state.design_images["structure"]
                             try:
-                                with st.spinner("Carpenter is calculating block placements..."):
-                                    # Init Carpenter
-                                    carpenter = CarpenterSession()
-                                    
-                                    # Build
-                                    blocks = carpenter.build_from_json(instructions)
-                                    
-                                    # Save
-                                    fm.save_json(blocks_file, blocks)
-                                    
-                                    # --- Dynamic Zoning Adjustment ---
-                                    # FIX: Import path must be relative to execution root
+                                with st.spinner(
+                                    "Tripo3D（モデル生成）→ ボクセル化 → Gemini（セマンティクス）… "
+                                    "完了まで 1〜3 分程度かかることがあります。"
+                                ):
+                                    result = arc.build_from_image(
+                                        s_path,
+                                        b_info,
+                                        force=bool(force_tripo),
+                                    )
+                                    blocks_out = result["blocks"]
+                                    inst_out = result["instructions"]
+                                    fm.save_json(blocks_file, blocks_out)
+                                    fm.save_json(inst_file, inst_out)
+
                                     try:
                                         from app.v2.layout_engine import LayoutEngine
                                     except ImportError:
-                                        # Fallback if running directly inside app/
                                         from v2.layout_engine import LayoutEngine
-                                    
-                                    # Load current source of truth for zoning
+
                                     current_zoning = []
                                     if fm.exists("zoning_adjusted.json"):
                                         current_zoning = fm.load_json("zoning_adjusted.json")
                                     elif fm.exists("zoning_data.json"):
                                         current_zoning = fm.load_json("zoning_data.json")
-                                    
+
                                     if current_zoning:
                                         engine = LayoutEngine(current_zoning)
-                                        # Update dimensions
-                                        updated = engine.update_zone_from_blocks(zone['id'], blocks)
+                                        updated = engine.update_zone_from_blocks(zone["id"], blocks_out)
                                         if updated:
-                                            # Resolve collisions (shift coordinates if needed)
-                                            moved = engine.resolve_collisions(zone['id'])
-                                            
-                                            # Save adjusted plan
+                                            moved = engine.resolve_collisions(zone["id"])
                                             new_zoning = engine.get_zones()
                                             fm.save_json("zoning_adjusted.json", new_zoning)
-                                            st.session_state.zoning = new_zoning # Update state
-                                            
-                                            msg = "Construction Data Generated."
+                                            st.session_state.zoning = new_zoning
+                                            msg = f"生成完了: {len(blocks_out)} blocks。"
                                             if moved:
-                                                msg += " (Zone Adjusted to avoid collision!)"
+                                                msg += " 区画を衝突回避のため調整しました。"
                                             st.success(msg)
                                     else:
-                                        st.success(f"Construction Complete! Generated {len(blocks)} blocks.")
-                                        
+                                        st.success(f"生成完了: {len(blocks_out)} blocks。")
+
+                                    with st.expander("Debug: mesh pipeline", expanded=False):
+                                        st.json(result.get("debug", {}), expanded=False)
+
                                     st.rerun()
                             except Exception as e:
-                                st.error(f"Construction Error: {e}")
-                                st.error(f"Construction Error: {e}")
-                    
-                    # Preview Section
-                    if blocks:
-                         st.markdown("### 3D Preview")
-                         fig = create_3d_preview(blocks, title=f"{zone['name']} (Preview)")
-                         st.plotly_chart(fig, use_container_width=True)
-                         
-                         if st.button("Proceed to Site (Phase 3)"):
-                             st.session_state.phase = 3
-                             st.rerun()
+                                st.error(f"Planning Error: {e}")
+
+                if blocks:
+                    st.markdown("### 3D Preview")
+                    fig = create_3d_preview(blocks, title=f"{zone['name']} (Preview)")
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    if st.button("Proceed to Site (Phase 3)", key=f"phase3_{zone['id']}"):
+                        st.session_state.phase = 3
+                        st.rerun()
 
 # --- Phase 3: Construction ---
 # --- Phase 3: Construction & Integration ---

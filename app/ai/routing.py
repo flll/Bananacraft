@@ -40,6 +40,7 @@ class AIStage(Enum):
     ZONING_PLAN = auto()
     ARCHITECT_VISION = auto()
     ARCHITECT_BUILD = auto()
+    SEMANTIC_PASS = auto()
     INFRASTRUCTURE = auto()
     DECORATION = auto()
 
@@ -87,6 +88,13 @@ ROUTES: Final[dict[AIStage, StageRoute]] = {
         _OAI_JSON,
         (),
         notes="BFCL FC 系で gpt-5.5 を既定。",
+    ),
+    AIStage.SEMANTIC_PASS: StageRoute(
+        Provider.GOOGLE,
+        "GEMINI_API_KEY",
+        _GEM_TEXT,
+        (),
+        notes="Mesh ボクセル上の窓・ドア・装飾を画像と照合して Gemini 3 Pro で JSON 化。",
     ),
     AIStage.INFRASTRUCTURE: StageRoute(
         Provider.OPENAI,

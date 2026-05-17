@@ -1,5 +1,6 @@
 streamlit
 streamlit-js-eval
+requests>=2.28.0
 pandas
 altair
 pillow
@@ -12,4 +13,5 @@ scikit-image
 mcrcon
 plotly
 trimesh
+rtree>=1.0.0
 matplotlib
