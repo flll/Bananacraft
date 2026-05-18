@@ -12,10 +12,8 @@ from v2.city_planner import CityPlanner
 from v2.zoning_fixer import fix_zoning
 
 from ui import state as S
-from ui.breadcrumbs import render_breadcrumbs
 from ui.buttons import primary_button, secondary_button
 from ui.feature_card import FeatureCard, render_feature_cards
-from ui.stepper import derive_main_steps_state, render_top_stepper
 
 
 def _require_concept() -> bool:
@@ -217,25 +215,10 @@ def _render_building_list() -> None:
 
 def render() -> None:
     S.ensure_session_defaults()
-    steps = derive_main_steps_state(
-        has_project=S.has_project(),
-        has_concept=S.has_concept(),
-        has_zoning=S.has_zoning(),
-        has_blueprint_for_selected=S.has_blueprint_for_selected(),
-    )
-    render_top_stepper("city_plan", completed=steps["completed"])
-
     if not _require_concept():
         return
 
-    render_breadcrumbs(
-        [
-            (f"📁 {st.session_state.project_name}", False),
-            ("Concept", False),
-            ("City Plan", True),
-        ]
-    )
-    st.title("🗺️ Step 3 — City Plan")
+    st.title("🗺️ City Plan")
     st.caption("コンセプトをもとに、建物の配置・道路・広場を AI が設計します。")
 
     if not S.has_zoning():

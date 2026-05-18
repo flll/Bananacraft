@@ -11,10 +11,8 @@ from file_manager import FileManager
 from v2.mesh_architect import MeshArchitect
 
 from ui import state as S
-from ui.breadcrumbs import render_breadcrumbs
 from ui.buttons import primary_button
 from ui.feature_card import FeatureCard, render_feature_cards
-from ui.stepper import derive_main_steps_state, render_top_stepper
 
 
 def _scan_existing_projects(base: str = "projects") -> list[str]:
@@ -57,17 +55,7 @@ def _bootstrap_project(p_name: str) -> None:
 
 def render() -> None:
     S.ensure_session_defaults()
-    # Stepper
-    steps = derive_main_steps_state(
-        has_project=S.has_project(),
-        has_concept=S.has_concept(),
-        has_zoning=S.has_zoning(),
-        has_blueprint_for_selected=S.has_blueprint_for_selected(),
-    )
-    render_top_stepper("setup", completed=steps["completed"])
-
-    render_breadcrumbs([("Setup", True)])
-    st.title("🛠️ Step 1 — Setup")
+    st.title("🛠️ Setup")
     st.caption("プロジェクトを作るか、既存のプロジェクトを開いて続きから作業します。")
 
     render_feature_cards(

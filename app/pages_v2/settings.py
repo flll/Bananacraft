@@ -10,7 +10,6 @@ from rcon_client import RconClient
 from terraformer import Terraformer
 
 from ui import state as S
-from ui.breadcrumbs import render_breadcrumbs
 from ui.buttons import danger_button, primary_button, secondary_button
 from ui.feature_card import FeatureCard, render_feature_cards
 
@@ -154,12 +153,6 @@ def _section_project_management() -> None:
 
 def render() -> None:
     S.ensure_session_defaults()
-    render_breadcrumbs(
-        [
-            (f"📁 {st.session_state.get('project_name') or '(no project)'}", False),
-            ("Settings", True),
-        ]
-    )
     st.title("⚙️ Settings")
     st.caption("API キー・原点座標・サーバー操作などの裏方設定。")
 

@@ -1,6 +1,6 @@
-"""Step 4: Building — 個別建物の Design → Blueprint → Build → Decorate。
+"""Building — 個別建物の Design → Blueprint → Build → Decorate。
 
-縦サブステッパーで進捗を可視化し、すべてを 1 画面に縦に積む。
+各サブセクションの見出しにインラインの状態ピルを表示して進捗を伝える。
 """
 from __future__ import annotations
 
@@ -18,11 +18,9 @@ from v2.mesh_architect import MeshArchitect
 from v2.preview import create_3d_preview
 
 from ui import state as S
-from ui.breadcrumbs import render_breadcrumbs
 from ui.buttons import danger_button, primary_button, secondary_button
 from ui.feature_card import FeatureCard, render_feature_cards
 from ui.status_card import PipelineStatus
-from ui.stepper import SubStep, derive_main_steps_state, render_substepper, render_top_stepper
 
 
 # ---- Helpers ----------------------------------------------------------
@@ -95,6 +93,22 @@ def _zone_decorate_state(
     return "cur" if build_done else "locked"
 
 
+# ---- Section header with badge -----------------------------------------
+
+def _section_header(num: int, title: str, state: str, detail: str = "") -> None:
+    badge = {
+        "done":   '<span class="bnn-pill bnn-pill-done">完了</span>',
+        "cur":    '<span class="bnn-pill bnn-pill-cur">進行中</span>',
+        "todo":   '<span class="bnn-pill bnn-pill-todo">未着手</span>',
+        "locked": '<span class="bnn-pill bnn-pill-locked">前のステップ後</span>',
+    }[state]
+    suffix = (
+        f' <span style="opacity:0.55;font-weight:400;font-size:0.8rem">— {detail}</span>'
+        if detail else ""
+    )
+    st.markdown(f"#### {num}. {title} {badge}{suffix}", unsafe_allow_html=True)
+
+
 # ---- Subsections ------------------------------------------------------
 
 def _section_design(zone: dict) -> bool:
@@ -112,7 +126,6 @@ def _section_design(zone: dict) -> bool:
     has_dec = bool(di and di.get("decorated"))
     has_str = bool(di and di.get("structure"))
 
-    st.markdown("#### 1. デザイン画像を生成")
     st.caption(
         "コンセプトを参照しつつ、AI が建物のリファレンス画像（装飾あり / 構造のみの 2 種）を生成します。"
         "構造画像はあとで Tripo3D に渡して 3D メッシュに変換します。"
@@ -186,13 +199,31 @@ def _section_design(zone: dict) -> bool:
             disabled=not prompt.strip(),
         ):
             try:
-                new_dec = client.generate_image(
-                    f"{zone.get('description', '')}, {prompt.strip()}, detailed"
+                prev_path = (st.session_state.design_images or {}).get("decorated")
+                prev_bytes = None
+                if prev_path and os.path.exists(prev_path):
+                    with open(prev_path, "rb") as f:
+                        prev_bytes = f.read()
+
+                base_desc = (zone.get("description") or "").strip()
+                combined_desc = (
+                    f"{base_desc}\n\n"
+                    f"【ユーザーからの修正指示】\n{prompt.strip()}\n\n"
+                    "【重要】添付の参照画像は、前回生成したMinecraftボクセル建築の現状です。"
+                    "形状・配色・世界観・ブロック単位の質感は維持しつつ、修正指示の方向に寄せてください。"
                 )
+                width = zone["position"]["width"]
+                depth = zone["position"]["depth"]
+
+                with st.spinner("Minecraft ボクセル建築を修正中..."):
+                    new_dec = client.generate_concept_image(
+                        combined_desc, width, depth, prev_bytes
+                    )
                 if not new_dec:
                     st.error("再生成に失敗しました。")
                     return False
                 ts = fm._get_timestamp()
+                fm.save_text(f"design_{zone_id}_feedback_{ts}.txt", prompt.strip())
                 p_path = fm.save_image(f"design_{zone_id}_dec_{ts}.jpg", new_dec)
                 st.session_state.design_images["decorated"] = p_path
                 st.toast("修正案を更新しました。", icon="🪄")
@@ -210,7 +241,6 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
     blocks_file = f"building_{zone_id}_blocks_v2.json"
     mesh_glob = os.path.join(fm.project_dir, f"mesh_{zone_id}.*")
 
-    st.markdown("#### 2. Tripo3D + ボクセル化でブループリント作成")
     st.caption(
         "Structure 画像から 3D メッシュを生成（Tripo3D）→ ボクセル化 → Minecraft ブロック割当を行います。"
         " さらに Gemini で窓・ドア等のセマンティック要素を補完します。"
@@ -348,7 +378,6 @@ def _section_build(zone: dict, blueprint_done: bool, log_key: str) -> bool:
     build_origin = _build_origin_for(zone)
     current_origin = S.project_origin()
 
-    st.markdown("#### 3. Minecraft サーバーに設置")
     st.caption("RCON 経由でブロックを一括設置します。`Origin` は Settings ページで変更できます。")
 
     st.markdown(
@@ -433,7 +462,6 @@ def _section_decorate(zone: dict, build_done: bool, executed_key: str) -> None:
     zone_id = zone["id"]
     deco_file = f"building_{zone_id}_decoration.json"
 
-    st.markdown("#### 4. AI で装飾を追加")
     st.caption(
         "Gemini が画像と構造を見比べて、窓・ドア・ランタン・蜂の巣などの装飾命令を生成し、"
         "AI Carpenter Bot（Mineflayer）が Minecraft 上に 1 ブロックずつ設置します。"
@@ -568,32 +596,15 @@ def render() -> None:
     server_log_key = f"_bnn_build_log_{zone_id}"
     bot_log_key = f"_bnn_bot_log_{zone_id}"
 
-    steps = derive_main_steps_state(
-        has_project=S.has_project(),
-        has_concept=S.has_concept(),
-        has_zoning=S.has_zoning(),
-        has_blueprint_for_selected=S.has_blueprint_for_selected(),
-    )
-    render_top_stepper("building", completed=steps["completed"])
-
-    render_breadcrumbs(
-        [
-            (f"📁 {st.session_state.project_name}", False),
-            ("City Plan", False),
-            (f"Building: {zone['name']}", True),
-        ]
-    )
-    st.title(f"🏛️ Step 4 — {zone['name']}")
+    st.title(f"🏛️ {zone['name']}")
     st.caption(f"{zone.get('type', 'normal')} | サイズ {zone['position']['width']}×{zone['position']['depth']}")
 
-    # ---- 縦サブステッパー ----
     design_state = _zone_design_state(fm, zone_id)
     bp_done = fm.exists(f"building_{zone_id}_blocks_v2.json")
     bp_state = _zone_blueprint_state(fm, zone_id, design_state == "done")
     build_state = _zone_build_state(fm, zone_id, bp_done, server_log_key)
     deco_state = _zone_decorate_state(fm, zone_id, build_state == "done", bot_log_key)
 
-    # 「最初に未完のサブステップ」を current にする
     sub_states = {"design": design_state, "blueprint": bp_state, "build": build_state, "decorate": deco_state}
     cur_key: Optional[str] = None
     for k in ("design", "blueprint", "build", "decorate"):
@@ -608,72 +619,52 @@ def render() -> None:
         if k == cur_key and sub_states[k] not in ("done", "locked"):
             sub_states[k] = "cur"
 
-    blocks_count = 0
-    if bp_done:
-        try:
-            blocks_count = len(fm.load_json(f"building_{zone_id}_blocks_v2.json") or [])
-        except Exception:
-            blocks_count = 0
+    render_feature_cards(
+        [
+            FeatureCard(
+                "🖼️→📐",
+                "画像から正確な 3D 形状",
+                "Tripo3D が Structure 画像から 3D メッシュを生成。"
+                "従来の LLM ベースより細部まで再現されます。",
+                meta="所要時間: 1〜3 分（API キャッシュあり）",
+            ),
+            FeatureCard(
+                "🎨",
+                "色合いも忠実に",
+                "テクスチャから色をサンプリングして Minecraft のブロックパレット"
+                "に最近傍マッチ。ハチミツ色なら蜂の巣や赤砂岩が選ばれます。",
+            ),
+            FeatureCard(
+                "🤖",
+                "装飾は AI Carpenter Bot",
+                "Mineflayer で Bot がサーバーに入り、Gemini が指示した窓・ドア・ランタンを 1 個ずつ設置。",
+            ),
+        ]
+    )
+    st.divider()
 
-    sidebar_col, main_col = st.columns([1, 3], gap="large")
-    with sidebar_col:
-        st.markdown("##### 進捗")
-        render_substepper(
-            [
-                SubStep("design", "Design",
-                        "Concept / Structure 画像", sub_states["design"]),
-                SubStep("blueprint", "Blueprint",
-                        (f"{blocks_count} blocks" if blocks_count else "Tripo3D + voxel"),
-                        sub_states["blueprint"]),
-                SubStep("build", "Build", "RCON で一括設置", sub_states["build"]),
-                SubStep("decorate", "Decorate", "AI Carpenter Bot", sub_states["decorate"]),
-            ]
-        )
+    with st.container():
+        _section_header(1, "デザイン画像を生成", sub_states["design"])
+        design_done = _section_design(zone)
 
-        st.divider()
-        if secondary_button("⬅️ City Plan に戻る", key=f"bnn_b_back_{zone_id}", use_container_width=True):
-            st.switch_page("pages_v2/city_plan.py")
+    st.divider()
+    with st.container():
+        _section_header(2, "Tripo3D + ボクセル化でブループリント作成", sub_states["blueprint"])
+        bp_done_now = _section_blueprint(zone, design_done)
 
-    with main_col:
-        render_feature_cards(
-            [
-                FeatureCard(
-                    "🖼️→📐",
-                    "画像から正確な 3D 形状",
-                    "Tripo3D が Structure 画像から 3D メッシュを生成。"
-                    "従来の LLM ベースより細部まで再現されます。",
-                    meta="所要時間: 1〜3 分（API キャッシュあり）",
-                ),
-                FeatureCard(
-                    "🎨",
-                    "色合いも忠実に",
-                    "テクスチャから色をサンプリングして Minecraft のブロックパレット"
-                    "に最近傍マッチ。ハチミツ色なら蜂の巣や赤砂岩が選ばれます。",
-                ),
-                FeatureCard(
-                    "🤖",
-                    "装飾は AI Carpenter Bot",
-                    "Mineflayer で Bot がサーバーに入り、Gemini が指示した窓・ドア・ランタンを 1 個ずつ設置。",
-                ),
-            ]
-        )
-        st.divider()
+    st.divider()
+    with st.container():
+        _section_header(3, "Minecraft サーバーに設置", sub_states["build"])
+        build_done_now = _section_build(zone, bp_done_now or bp_done, server_log_key)
 
-        # ---- 4 つのサブステップを縦に展開 ----
-        with st.container():
-            design_done = _section_design(zone)
+    st.divider()
+    with st.container():
+        _section_header(4, "AI で装飾を追加", sub_states["decorate"])
+        _section_decorate(zone, build_done_now or bool(st.session_state.get(server_log_key)), bot_log_key)
 
-        st.divider()
-        with st.container():
-            bp_done_now = _section_blueprint(zone, design_done)
-
-        st.divider()
-        with st.container():
-            build_done_now = _section_build(zone, bp_done_now or bp_done, server_log_key)
-
-        st.divider()
-        with st.container():
-            _section_decorate(zone, build_done_now or bool(st.session_state.get(server_log_key)), bot_log_key)
+    st.divider()
+    if secondary_button("⬅️ City Plan に戻る", key=f"bnn_b_back_{zone_id}"):
+        st.switch_page("pages_v2/city_plan.py")
 
 
 render()

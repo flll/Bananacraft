@@ -1,7 +1,7 @@
 """ハチミツ色のテーマ + 共通 CSS インジェクション。
 
 config.toml で primaryColor などは設定済み。ここでは
-`.bnn-*` 系のクラスを使ったカスタム CSS を 1 回だけ流し込む。
+`.bnn-*` 系のクラスを使ったカスタム CSS を毎描画で DOM に流し込む。
 """
 from __future__ import annotations
 
@@ -18,16 +18,7 @@ _PAPER = "#1A1108"
 _PAPER2 = "#2A1810"
 _MUTED = "#8B7355"
 
-
-def inject_theme_css() -> None:
-    """共通 CSS を 1 回だけ注入する。複数ページから呼んでも重複しない。"""
-    if st.session_state.get("_bnn_theme_injected"):
-        return
-    st.session_state["_bnn_theme_injected"] = True
-
-    st.markdown(
-        f"""
-<style>
+_CSS = f"""<style>
 /* ===== Bananacraft global tweaks ===== */
 .stApp {{
     background:
@@ -205,7 +196,9 @@ section[data-testid="stSidebar"] .stExpander {{
 
 /* ===== Dialog buttons spacing ===== */
 div[role="dialog"] .stButton > button {{ min-width: 7rem; }}
-</style>
-""",
-        unsafe_allow_html=True,
-    )
+</style>"""
+
+
+def inject_theme_css() -> None:
+    """共通 CSS を毎描画で注入する。DOM は再描画ごとにリセットされるため毎回必要。"""
+    st.markdown(_CSS, unsafe_allow_html=True)

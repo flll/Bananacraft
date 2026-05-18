@@ -6,10 +6,8 @@ import streamlit as st
 from ai.routing import AIStage, Provider, effective_route
 
 from ui import state as S
-from ui.breadcrumbs import render_breadcrumbs
 from ui.buttons import primary_button, secondary_button
 from ui.feature_card import FeatureCard, render_feature_cards
-from ui.stepper import derive_main_steps_state, render_top_stepper
 
 
 def _require_project() -> bool:
@@ -99,24 +97,10 @@ def _refine_concept(feedback: str) -> None:
 
 def render() -> None:
     S.ensure_session_defaults()
-    steps = derive_main_steps_state(
-        has_project=S.has_project(),
-        has_concept=S.has_concept(),
-        has_zoning=S.has_zoning(),
-        has_blueprint_for_selected=S.has_blueprint_for_selected(),
-    )
-    render_top_stepper("concept", completed=steps["completed"])
-
     if not _require_project():
         return
 
-    render_breadcrumbs(
-        [
-            (f"📁 {st.session_state.project_name}", False),
-            ("Concept", True),
-        ]
-    )
-    st.title("💡 Step 2 — Concept")
+    st.title("💡 Concept")
     st.caption("一文の説明から、AI が街の世界観をビジュアル化します。気に入るまで何度でも作り直せます。")
 
     if not st.session_state.get("concept"):
