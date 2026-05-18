@@ -40,14 +40,24 @@ class PipelineStatus:
 
     # ---- API ----
 
-    def step(self, label: str, *, write: Optional[str] = None) -> None:
-        """ラベルを更新し、ステップ進捗を `running` 状態にする。"""
+    def step(
+        self,
+        label: str,
+        detail: Optional[str] = None,
+        *,
+        write: Optional[str] = None,
+    ) -> None:
+        """ラベルを更新し、ステップ進捗を `running` 状態にする。
+
+        2 つ目の引数は位置引数でもキーワード引数 (`write=...`) でも受け取れる。
+        """
         try:
             self._status.update(label=label, state="running")
         except Exception:
             pass
-        if write:
-            self.write(write)
+        text = write if write is not None else detail
+        if text:
+            self.write(text)
 
     def write(self, text: str) -> None:
         try:

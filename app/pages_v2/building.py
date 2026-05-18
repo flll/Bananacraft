@@ -14,7 +14,9 @@ from rcon_client import RconClient
 from v2.blueprint_analyzer import BlueprintAnalyzer
 from v2.carpenter import CarpenterSession
 from v2.decorator import Decorator
+from v2.glb_viewer import find_glb_in_dir, render_glb
 from v2.mesh_architect import MeshArchitect
+from v2.palette_inference import infer_palette
 from v2.preview import create_3d_preview
 
 from ui import state as S
@@ -257,8 +259,22 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
         st.success(f"ブループリント準備済み: **{len(blocks)}** blocks", icon="✅")
 
         with st.expander("3D Preview", expanded=False):
-            fig = create_3d_preview(blocks, title=f"{zone['name']} (Preview)")
-            st.plotly_chart(fig, use_container_width=True)
+            tab_vox, tab_glb = st.tabs(
+                ["🧊 Voxel (Minecraft)", "🗿 Original Mesh (Tripo3D)"]
+            )
+            with tab_vox:
+                fig = create_3d_preview(blocks, title=f"{zone['name']} (Voxel)")
+                st.plotly_chart(fig, use_container_width=True)
+            with tab_glb:
+                glb_path = find_glb_in_dir(fm.project_dir, zone_id)
+                if glb_path:
+                    render_glb(glb_path, height=520)
+                else:
+                    st.info(
+                        "GLB ファイルが見つかりません。ブループリントを再生成すると "
+                        "Tripo3D 由来のメッシュをここに表示できます。",
+                        icon="📦",
+                    )
 
         with st.expander("instructions.json", expanded=False):
             if fm.exists(inst_file):
@@ -331,11 +347,19 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
                     if detail:
                         p.write(detail)
 
+                concept_text = (st.session_state.concept or {}).get("description", "") or ""
+                palette = infer_palette(concept_text, b_info)
+                if palette:
+                    short = ", ".join(b.split(":", 1)[-1] for b in palette[:6])
+                    suffix = " ..." if len(palette) > 6 else ""
+                    p.write(f"テーマパレット: {len(palette)} blocks → {short}{suffix}")
+
                 result = arc.build_from_image(
                     s_path,
                     b_info,
                     force=bool(force_tripo),
                     progress=_cb,
+                    palette=palette,
                 )
                 blocks_out = result["blocks"]
                 inst_out = result["instructions"]
