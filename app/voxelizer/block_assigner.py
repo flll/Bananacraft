@@ -75,6 +75,12 @@ class BlockFace:
     """Color and standard deviation for a block face"""
     color: np.ndarray  # RGBA [0, 1]
     std: float = 0.0
+    # vanilla.atlas でこの面が参照するテクスチャ名 (e.g. "minecraft:block/oak_log_top")。
+    # 後段の voxel_glb_builder が UV マッピングで使う。None の場合はテクスチャ未確定。
+    texture_name: Optional[str] = None
+    # アトラス内のタイル座標 (col, row)。texture_name が解決済みの場合のみ設定。
+    atlas_col: Optional[int] = None
+    atlas_row: Optional[int] = None
 
 
 @dataclass
@@ -103,30 +109,54 @@ class BlockAtlas:
     """
     Manages the atlas of Minecraft block colors.
     Loads from vanilla.atlas JSON file.
+
+    vanilla.atlas は ObjToSchematic 由来の形式で、以下を含む:
+
+    - `atlasSize`: タイル数 (= 横方向の col 数、20 が標準)
+    - `textures`: テクスチャ名 → {atlasColumn, atlasRow, colour, std} の辞書
+    - `blocks`: ブロック名 → {faces: {up: tex_name, ...}, colour: {...}}
+
+    各ブロックの face 値は**テクスチャ名の文字列**で、`textures` テーブルを引いて
+    実際の RGB / アトラス座標を取得する。
     """
-    
+
     def __init__(self, atlas_path: Optional[str | Path] = None):
         """
         Load the atlas from a JSON file.
-        
+
         Args:
             atlas_path: Path to vanilla.atlas, or None to use default
         """
         if atlas_path is None:
             # Default to the bundled atlas
             atlas_path = Path(__file__).parent / 'vanilla.atlas'
-        
+
+        self.atlas_path: Path = Path(atlas_path)
+        self.atlas_size: int = 20  # 既定値、_load_atlas で上書き
+        self.textures: dict[str, dict] = {}
         self.blocks: dict[str, AtlasBlock] = {}
-        self._load_atlas(atlas_path)
-    
+        self._raw: dict = {}
+        self._load_atlas(self.atlas_path)
+
+    @property
+    def raw_data(self) -> dict:
+        """元の JSON 辞書 (texture_atlas.py が PNG 生成に使う)。"""
+        return self._raw
+
     def _load_atlas(self, atlas_path: str | Path) -> None:
-        """Load atlas data from JSON file"""
+        """Load atlas data from JSON file (per-face texture refs 対応)."""
         with open(atlas_path, 'r') as f:
             data = json.load(f)
-        
+
+        self._raw = data
+        self.atlas_size = int(data.get('atlasSize', 20))
+        self.textures = data.get('textures', {}) or {}
+
+        face_names = ['up', 'down', 'north', 'south', 'east', 'west']
+
         for block_data in data.get('blocks', []):
             name = block_data['name']
-            
+
             # Parse global color
             color = np.array([
                 block_data['colour']['r'],
@@ -134,10 +164,12 @@ class BlockAtlas:
                 block_data['colour']['b'],
                 block_data['colour']['a']
             ], dtype=np.float32)
-            
-            # Parse face colors if available
-            faces = {}
-            if 'faceColours' in block_data:
+
+            faces: dict[str, BlockFace] = {}
+            block_faces_data = block_data.get('faces')
+
+            # Format A: 旧フォーマット (各面に直接 colour/std) — 後方互換
+            if 'faceColours' in block_data and isinstance(block_data['faceColours'], dict):
                 for face_name, face_data in block_data['faceColours'].items():
                     faces[face_name] = BlockFace(
                         color=np.array([
@@ -148,17 +180,65 @@ class BlockAtlas:
                         ], dtype=np.float32),
                         std=face_data.get('std', 0.0)
                     )
-            else:
-                # Use global color for all faces if face colors not available
-                for face_name in ['up', 'down', 'north', 'south', 'east', 'west']:
+
+            # Format B: 新フォーマット (faces 値はテクスチャ名の文字列)
+            elif isinstance(block_faces_data, dict):
+                for face_name in face_names:
+                    tex_name = block_faces_data.get(face_name)
+                    face = self._build_face_from_texture(tex_name, fallback_rgba=color)
+                    faces[face_name] = face
+
+            # 不明: グローバル色で全面を埋める
+            if not faces:
+                for face_name in face_names:
                     faces[face_name] = BlockFace(color=color.copy())
-            
+
+            # 6 面いずれかが欠けている場合はグローバル色で埋める (defensive)
+            for face_name in face_names:
+                if face_name not in faces:
+                    faces[face_name] = BlockFace(color=color.copy())
+
             self.blocks[name] = AtlasBlock(name=name, color=color, faces=faces)
-    
+
+    def _build_face_from_texture(
+        self,
+        tex_name: Optional[str],
+        *,
+        fallback_rgba: np.ndarray,
+    ) -> BlockFace:
+        """テクスチャ名から BlockFace を構築。textures テーブルを引く。"""
+        if not tex_name:
+            return BlockFace(color=fallback_rgba.copy())
+
+        tex = self.textures.get(tex_name)
+        if not isinstance(tex, dict):
+            return BlockFace(color=fallback_rgba.copy(), texture_name=tex_name)
+
+        col_info = tex.get('colour') or {}
+        if {'r', 'g', 'b'} <= set(col_info.keys()):
+            color = np.array([
+                col_info.get('r', 0.0),
+                col_info.get('g', 0.0),
+                col_info.get('b', 0.0),
+                col_info.get('a', 1.0),
+            ], dtype=np.float32)
+        else:
+            color = fallback_rgba.copy()
+
+        col = tex.get('atlasColumn')
+        row = tex.get('atlasRow')
+        return BlockFace(
+            color=color,
+            std=float(tex.get('std', 0.0)),
+            texture_name=tex_name,
+            atlas_col=int(col) if col is not None else None,
+            atlas_row=int(row) if row is not None else None,
+        )
+
     def get_block(self, name: str) -> Optional[AtlasBlock]:
         """Get a block by name"""
         return self.blocks.get(name)
-    
+
     def get_all_block_names(self) -> list[str]:
         """Get all block names in the atlas"""
         return list(self.blocks.keys())
@@ -199,6 +279,17 @@ class BlockAssigner:
         'minecraft:diamond_block', 'minecraft:emerald_block', 'minecraft:lapis_block',
         'minecraft:quartz_block', 'minecraft:bone_block', 'minecraft:snow_block',
         'minecraft:honeycomb_block', 'minecraft:honey_block',
+        # Natural ground / vegetation (色マッチの抜け穴を埋める。緑色の voxel が
+        # `green_terracotta` 等の暗緑にしかマッチせず黒っぽく見える問題への対処)
+        'minecraft:dirt', 'minecraft:coarse_dirt', 'minecraft:rooted_dirt',
+        'minecraft:podzol', 'minecraft:mud', 'minecraft:packed_mud',
+        'minecraft:moss_block', 'minecraft:mossy_cobblestone',
+        'minecraft:mossy_stone_bricks', 'minecraft:cherry_leaves',
+        # Logs (側面の樹皮色を持つので、茶系の voxel を `brown_wool` ではなく
+        # `oak_log` 等の本物の樹皮ブロックにマッチさせやすくする)
+        'minecraft:oak_log', 'minecraft:spruce_log', 'minecraft:birch_log',
+        'minecraft:jungle_log', 'minecraft:acacia_log', 'minecraft:dark_oak_log',
+        'minecraft:cherry_log', 'minecraft:mangrove_log',
     ]
     
     def __init__(

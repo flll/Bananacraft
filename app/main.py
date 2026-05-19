@@ -50,11 +50,16 @@ if not _check_password():
 from ui.state import ensure_session_defaults, hydrate_api_keys_from_browser, apply_api_keys_to_env
 from ui.theme import inject_theme_css
 from ui.onboarding import maybe_show_onboarding
+from v2 import mc_assets_prefs as _mc_prefs
+from v2 import mc_assets_runtime as _mc_runtime
 
 ensure_session_defaults()
 hydrate_api_keys_from_browser()
 apply_api_keys_to_env()
 inject_theme_css()
+
+_mc_runtime.set_force_procedural(_mc_prefs.load().force_procedural)
+_mc_runtime.kickoff()
 
 # ---- Sidebar (global) -------------------------------------------------
 with st.sidebar:

@@ -154,3 +154,18 @@ Building ページの PipelineStatus には `style` / `target_voxel` / `face_lim
 - **コスト**: Tripo クレジット追加消費 (`texture_quality=detailed` なら +10 cr) + 60〜120 秒の追加生成時間
 - **推奨タイミング**: ハニカム模様や原木の節など、色のニュアンスが重要な建物を作る時
 - **デフォルト OFF**: 通常は `image_to_model` 単発で十分な品質が出る
+
+### 🧱 Minecraft 公式テクスチャの自動取得
+
+Voxel プレビューは Minecraft 公式のブロックテクスチャを使って表示できます。
+
+- **挙動**: 初回起動時にバックグラウンドで Mojang 公式の [`version_manifest_v2.json`](https://piston-meta.mojang.com/mc/game/version_manifest_v2.json) から最新 release を解決し、`client.jar` を `~/.cache/bananacraft/mc/<version>/client.jar` にダウンロードします。SHA1 検証付きなので破損／改ざんを検知します。
+- **テクスチャ展開**: `assets/minecraft/textures/block/*.png` を抽出し、`vanilla.atlas` の `atlasColumn/atlasRow` 座標に従って 1 枚の 320×320 PNG (`~/.cache/bananacraft/voxel_atlas_official_<version>.png`) に焼き直します。
+- **フォールバック**: ダウンロード失敗・ネットワーク不通時は手作りピクセルアトラス (`voxel_atlas_procedural.png`) に自動で切り替わるので、起動を妨げません。
+- **コントロール**: `Settings → 🧱 Minecraft アセット` セクションでステータス確認・再ダウンロード・jar キャッシュ削除ができます。「**手作りアトラスを強制使用**」トグルを ON にすると公式 jar の取得を抑止できます (`~/.config/bananacraft/mc_assets_prefs.json` に永続化)。
+
+#### ライセンス・運用上の注意
+
+- ダウンロードした `client.jar` は **Bananacraft の配布物には含まれません**。各ユーザーのキャッシュディレクトリにのみ保存されます。
+- Minecraft EULA に従って **個人利用範囲**でのみ動作する想定です。商用配布や再配布、リソースパック化などの二次配布はしないでください。
+- `.gitignore` に `.cache/` を追加しているので、リポジトリにキャッシュが入り込むことはありません。

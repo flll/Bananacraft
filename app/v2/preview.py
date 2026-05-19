@@ -47,8 +47,25 @@ BLOCK_COLORS: Dict[str, str] = {
     "birch_planks": "#D5C98C",
     "birch_log": "#E2D9B4",
     "jungle_planks": "#B07E5A",
+    "jungle_log": "#54401C",
     "dark_oak_planks": "#3E2912",
+    "dark_oak_log": "#352617",
     "acacia_planks": "#B26A33",
+    "acacia_log": "#666666",
+    "cherry_planks": "#E5B7B0",
+    "cherry_log": "#5D3A39",
+    "mangrove_planks": "#763738",
+    "mangrove_log": "#572E1F",
+
+    # Leaves
+    "oak_leaves": "#3D6B27",
+    "spruce_leaves": "#2D4A22",
+    "birch_leaves": "#5C7B3A",
+    "jungle_leaves": "#3F8F2D",
+    "dark_oak_leaves": "#2E4E1C",
+    "acacia_leaves": "#74894E",
+    "cherry_leaves": "#E76CA5",
+    "mangrove_leaves": "#5C8B45",
 
     # Metals
     "iron_block": "#D8D8D8",
@@ -58,15 +75,36 @@ BLOCK_COLORS: Dict[str, str] = {
     "emerald_block": "#37D161",
     "lapis_block": "#1E429F",
 
-    # Natural
+    # Natural ground
     "grass_block": "#7CBA4E",
-    "dirt": "#8B6914",
+    "dirt": "#866043",
+    "coarse_dirt": "#77553B",
+    "rooted_dirt": "#90634A",
+    "podzol": "#5A3F22",
+    "mud": "#3F352E",
+    "packed_mud": "#8B6B4E",
+    "mud_bricks": "#876751",
+    "moss_block": "#5C7A2D",
+    "moss_carpet": "#6E8B36",
+    "mossy_cobblestone": "#5F6B4E",
+    "mossy_stone_bricks": "#71765D",
     "sand": "#DBCFA0",
     "sandstone": "#D9C97C",
     "red_sand": "#BF7847",
     "red_sandstone": "#BA6A39",
     "netherrack": "#6F2D2D",
     "obsidian": "#1A0F2C",
+    "coal_block": "#161616",
+    "redstone_block": "#A41C16",
+
+    # Light sources
+    "lantern": "#8E6E3A",
+    "soul_lantern": "#3E7D8C",
+    "torch": "#F0B440",
+    "soul_torch": "#3DA0B7",
+    "wall_torch": "#F0B440",
+    "campfire": "#A35B2F",
+    "soul_campfire": "#3E8FA0",
 
     # Honey / bee
     "honey_block": "#F4A100",
@@ -266,7 +304,7 @@ def _build_traces(blocks: List[Dict]) -> List[go.Mesh3d]:
                 k=data["k"],
                 color=color,
                 flatshading=True,
-                lighting=dict(ambient=0.85, diffuse=0.25, specular=0.0, roughness=1.0),
+                lighting=dict(ambient=0.7, diffuse=0.4, specular=0.0, roughness=1.0),
                 hoverinfo="text",
                 text=data["hover"],
                 showscale=False,

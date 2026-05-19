@@ -40,6 +40,10 @@ _HONEY = [
     "minecraft:dark_oak_planks",
     "minecraft:gold_block",
     "minecraft:sandstone",
+    # 自然のアクセント: 地面・草・葉
+    "minecraft:dirt",
+    "minecraft:moss_block",
+    "minecraft:cherry_leaves",
 ]
 _WOOD = [
     "minecraft:oak_log",
@@ -52,6 +56,11 @@ _WOOD = [
     "minecraft:bricks",
     "minecraft:cobblestone",
     "minecraft:stone",
+    # 自然のアクセント: 地面・苔
+    "minecraft:dirt",
+    "minecraft:coarse_dirt",
+    "minecraft:moss_block",
+    "minecraft:mossy_cobblestone",
 ]
 _STONE_CASTLE = [
     "minecraft:stone",
@@ -66,6 +75,9 @@ _STONE_CASTLE = [
     "minecraft:iron_block",
     "minecraft:gray_concrete",
     "minecraft:gray_terracotta",
+    # 自然のアクセント: 苔ばんだ城壁
+    "minecraft:mossy_cobblestone",
+    "minecraft:mossy_stone_bricks",
 ]
 _DESERT = [
     "minecraft:sandstone",
@@ -78,6 +90,9 @@ _DESERT = [
     "minecraft:brown_terracotta",
     "minecraft:white_terracotta",
     "minecraft:bricks",
+    # 砂漠の自然: 乾いた土
+    "minecraft:coarse_dirt",
+    "minecraft:packed_mud",
 ]
 _NETHER_FIRE = [
     "minecraft:netherrack",
@@ -103,15 +118,25 @@ _ICE_SNOW = [
 _FOREST_NATURE = [
     "minecraft:oak_log",
     "minecraft:oak_planks",
-    "minecraft:spruce_log",  # フォールバック; 不在なら filter で消える
+    "minecraft:spruce_log",
     "minecraft:spruce_planks",
+    "minecraft:birch_log",
     "minecraft:birch_planks",
-    "minecraft:green_concrete",
+    # 緑系の自然素材を主役に近い位置に
+    "minecraft:moss_block",
+    "minecraft:cherry_leaves",
     "minecraft:green_terracotta",
     "minecraft:lime_terracotta",
+    "minecraft:green_concrete",
     "minecraft:cobblestone",
-    "minecraft:mossy_cobblestone",  # 不在なら除外
+    "minecraft:mossy_cobblestone",
+    "minecraft:mossy_stone_bricks",
     "minecraft:bricks",
+    # 地面
+    "minecraft:dirt",
+    "minecraft:coarse_dirt",
+    "minecraft:podzol",
+    "minecraft:rooted_dirt",
 ]
 _OCEAN_AQUA = [
     "minecraft:prismarine",
@@ -231,9 +256,14 @@ def _gemini_palette(
         "2. Prefer characteristic natural blocks (logs, honey, prismarine, "
         "obsidian, sandstone, terracotta, gold_block) over generic dyed blocks "
         "(wool, concrete) when they convey the same color.\n"
-        "3. Put accent / detail blocks (windows, lanterns, fence, etc) at the END "
+        "3. **For greenery and ground**, prefer natural blocks over dyed concrete: "
+        "use `moss_block` / `cherry_leaves` / `mossy_cobblestone` for greens, and "
+        "`dirt` / `coarse_dirt` / `podzol` for browns when the concept depicts "
+        "vegetation or earth. Reserve `green_concrete` / `green_terracotta` for "
+        "explicitly painted / artificial surfaces only.\n"
+        "4. Put accent / detail blocks (windows, lanterns, fence, etc) at the END "
         "of the list — they should still appear if they're visually important.\n"
-        "4. Avoid bright primary colors that conflict with the concept."
+        "5. Avoid bright primary colors that conflict with the concept."
     )
     user = (
         f"Concept context:\n{concept_text}\n\n"

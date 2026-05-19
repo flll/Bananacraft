@@ -77,7 +77,13 @@ class TripoConfig:
     texture_bake: bool = True
 
     # --- ボクセル解像度 (このリポ内部用、Tripo API には送らない) ----------
-    voxel_lower_bound: int = 12
+    # ボクセル化時の解像度を `max(lower, min(upper, max(width, depth)))` で決める。
+    # 1 voxel = 1 Minecraft ブロックなので、これが直接「建物のブロック数」に影響する。
+    # 表面ブロック数の概算: ~6 × target_voxel² (表面のみのため)
+    #   voxel_lower_bound=6  -> ~200 blocks (ドット絵スケール、推奨)
+    #   voxel_lower_bound=12 -> ~800 blocks (中スケール)
+    #   voxel_lower_bound=24 -> ~3500 blocks (大型詳細)
+    voxel_lower_bound: int = 6
     voxel_upper_bound: int = 48
 
     # ------------------------------------------------------------------

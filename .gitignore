@@ -20,3 +20,9 @@ npm-debug.log
 projects/*
 !projects/.gitkeep
 minecraft-data/
+
+# Local caches (Minecraft client.jar, atlas PNG, etc.)
+# These live in ~/.cache/bananacraft/ by default; the entry below covers
+# the case where someone re-points the cache root into the repo.
+.cache/
+.bananacraft-cache/

@@ -14,10 +14,14 @@ from rcon_client import RconClient
 from v2.blueprint_analyzer import BlueprintAnalyzer
 from v2.carpenter import CarpenterSession
 from v2.decorator import Decorator
-from v2.glb_viewer import find_glb_in_dir, render_glb
+from v2.glb_viewer import find_glb_in_dir, render_glb, render_glb_bytes
+from v2 import mc_assets_runtime as _mc_runtime
 from v2.mesh_architect import MeshArchitect
 from v2.palette_inference import infer_palette
 from v2.preview import create_3d_preview
+from v2.texture_atlas import get_or_build_atlas_png
+from v2.voxel_glb_builder import build_voxel_glb
+from voxelizer.block_assigner import BlockAtlas
 
 from ui import state as S
 from ui.buttons import danger_button, primary_button, secondary_button
@@ -26,6 +30,72 @@ from ui.status_card import PipelineStatus
 
 
 # ---- Helpers ----------------------------------------------------------
+
+@st.cache_resource(show_spinner=False)
+def _shared_block_atlas() -> BlockAtlas:
+    """`BlockAtlas` を Streamlit セッション横断で 1 度だけロードする。"""
+    return BlockAtlas()
+
+
+@st.cache_data(show_spinner=False)
+def _build_voxel_glb_cached(
+    blocks_key: tuple,
+    blocks_payload: list,
+    atlas_version: str,
+) -> bytes:
+    """ブロック列ハッシュ + atlas バージョンをキーに GLB を生成・キャッシュ。
+
+    `atlas_version` は ``official:<ver>`` / ``procedural`` のどちらか。
+    公式アセット昇格時にキャッシュが自動的にミスして再生成される。
+    """
+    atlas = _shared_block_atlas()
+    force = atlas_version == "procedural" and _mc_runtime.is_force_procedural()
+    png = get_or_build_atlas_png(atlas, force_procedural=force)
+    return build_voxel_glb(blocks_payload, atlas, png)
+
+
+def _blocks_cache_key(blocks: List[Dict[str, Any]]) -> tuple:
+    """同一内容なら同一タプル (順序非依存) になるキー。"""
+    return tuple(sorted((int(b["x"]), int(b["y"]), int(b["z"]), b.get("type", "stone")) for b in blocks))
+
+
+def _render_voxel_preview(
+    blocks: List[Dict[str, Any]],
+    zone: Dict[str, Any],
+    zone_id: int,
+) -> None:
+    """Voxel タブの中身: GLB + テクスチャ。失敗時は Plotly にフォールバック。"""
+    if not blocks:
+        st.info("表示できるブロックがありません。")
+        return
+
+    try:
+        key = _blocks_cache_key(blocks)
+        atlas_tag = _mc_runtime.atlas_version_tag()
+        glb_bytes = _build_voxel_glb_cached(key, blocks, atlas_tag)
+        if atlas_tag.startswith("official:"):
+            atlas_label = f"公式テクスチャ {atlas_tag.split(':', 1)[1]}"
+        else:
+            atlas_label = "手作りピクセルテクスチャ"
+        ok = render_glb_bytes(
+            glb_bytes,
+            height=520,
+            auto_rotate=False,
+            alt=f"{zone.get('name', 'building')} voxel preview",
+            caption=(
+                f"📦 {len(blocks)} blocks · 1 cube/block · "
+                f"{atlas_label} (320×320 atlas) — "
+                f"{len(glb_bytes) / 1024:,.1f} KB"
+            ),
+        )
+        if ok:
+            return
+    except Exception as e:  # noqa: BLE001 - フォールバックのため広く拾う
+        st.warning(f"GLB preview に失敗したため Plotly にフォールバックします: {e}")
+
+    fig = create_3d_preview(blocks, title=f"{zone['name']} (Voxel)")
+    st.plotly_chart(fig, use_container_width=True)
+
 
 def _force_persistent_leaves(blocks: List[Dict[str, Any]]) -> None:
     for b in blocks:
@@ -263,8 +333,7 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
                 ["🧊 Voxel (Minecraft)", "🗿 Original Mesh (Tripo3D)"]
             )
             with tab_vox:
-                fig = create_3d_preview(blocks, title=f"{zone['name']} (Voxel)")
-                st.plotly_chart(fig, use_container_width=True)
+                _render_voxel_preview(blocks, zone, zone_id)
             with tab_glb:
                 glb_path = find_glb_in_dir(fm.project_dir, zone_id)
                 if glb_path:

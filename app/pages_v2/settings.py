@@ -8,6 +8,8 @@ import streamlit as st
 from ai.browser_keys import clear_persisted_keys, save_persisted_keys
 from rcon_client import RconClient
 from terraformer import Terraformer
+from v2 import mc_assets_prefs as _mc_prefs
+from v2 import mc_assets_runtime as _mc_runtime
 from v2.tripo_config import (
     MODEL_VERSION_CHOICES,
     QUALITY_CHOICES,
@@ -410,11 +412,16 @@ def _section_tripo() -> None:
             "**1 voxel = 1 Minecraft ブロック** なので、これが直接「建物のブロック数」になります。\n\n"
             "計算式: `target_voxel = max(lower, min(upper, max(width, depth)))`\n"
             "（建物の縦／横の長い方を、lower〜upper の範囲にクランプ）\n\n"
+            "**目安（表面ブロック数 ≒ 6 × target_voxel²）**:\n"
+            "- 🟦 `lo=4, hi=5` → **~150 blocks**（**Pixel Art**: 1 マス = 1 ブロック、推奨）\n"
+            "- 🟢 `lo=6, hi=12` → **~600 blocks**（小屋スケール）\n"
+            "- 🟡 `lo=12, hi=24` → **~3000 blocks**（中スケール、立体感あり）\n"
+            "- 🔴 `lo=24, hi=48` → **~14000 blocks**（大型・高精細）\n\n"
             "**いつ触る？**\n"
-            "- 🟦 出来高が**「1 ブロックが 10 倍に拡大されたドット絵」**になる → `voxel_lower_bound` を**下げる**（8〜12）\n"
-            "- 🟪 出来高が**カクカクで細部が消える** → `voxel_lower_bound` を**上げる**（16〜20）\n"
-            "- 🟫 巨大建築（50×50 など）で重い → `voxel_upper_bound` を下げる（32〜48）\n\n"
-            "💡 **City Plan の 10×10 区画なら、下限 12 / 上限 48 で 1 voxel ≒ 1 ブロックの綺麗なマッピングになります。**",
+            "- 🟦 出来高が**ブロック数 1 万超えで重い／本家っぽくない** → `voxel_lower_bound` / `voxel_upper_bound` を**下げる**\n"
+            "- 🟪 出来高が**カクカクすぎて細部が消える** → 両方の bound を**上げる**\n\n"
+            "💡 **「ドット絵 1 マス = ブロック 1 個」を狙うなら lo=4, hi=5 が究極の Pixel Art スケール**\n"
+            "（どんな footprint でも target_voxel が 4〜5 にロック → 5×5 ブロックの壁が 1 quad 1 ブロックに対応）。",
             icon="🧱",
         )
         c1, c2 = st.columns(2)
@@ -422,39 +429,57 @@ def _section_tripo() -> None:
             cfg.voxel_lower_bound = int(
                 st.slider(
                     "voxel_lower_bound（最小解像度）",
-                    min_value=8,
+                    min_value=4,
                     max_value=32,
                     value=int(cfg.voxel_lower_bound),
                     key="bnn_tripo_vlo",
                     help=(
                         "区画が小さくても保証されるボクセル数の下限。\n"
-                        "小さくするほど concept art の 1 ブロックが Minecraft の 1 ブロックに近づく。\n"
-                        "推奨: 12"
+                        "小さくするほど concept art の 1 ブロックが Minecraft の 1 ブロックに近づく。\n\n"
+                        "目安:\n"
+                        "・4-6: ドット絵スケール (~100-200 blocks)\n"
+                        "・8-12: 中スケール (~400-800 blocks)\n"
+                        "・16-24: 大型・高精細 (~1500-3500 blocks)\n"
+                        "推奨: 6"
                     ),
                 )
             )
-            st.caption("⬇ 「ドット絵が拡大されすぎ」と感じたら下げる")
+            st.caption("⬇ ブロック数が多すぎ／本家っぽくないなら下げる")
         with c2:
             cfg.voxel_upper_bound = int(
                 st.slider(
                     "voxel_upper_bound（最大解像度）",
-                    min_value=32,
+                    min_value=4,
                     max_value=128,
                     value=int(cfg.voxel_upper_bound),
                     key="bnn_tripo_vhi",
                     help=(
                         "大規模区画でもブロック数が無限大にならないよう抑える上限。\n"
-                        "高くするほど大型建築のディテールが残る。\n"
-                        "推奨: 48"
+                        "高くするほど大型建築のディテールが残る。\n\n"
+                        "**Pixel Art を狙うなら lo=4, hi=5** で固定すると、"
+                        "footprint に関係なく target_voxel が 4〜5 に縛られる。\n"
+                        "推奨: 48 (通常) / 5 (Pixel Art)"
                     ),
                 )
             )
-            st.caption("⬆ 大型建築の細部が欲しいなら上げる")
+            st.caption("⬆ 大型建築の細部が欲しいなら上げる ⬇ Pixel Art なら 5 程度")
         if cfg.voxel_lower_bound > cfg.voxel_upper_bound:
             st.warning(
                 "voxel_lower_bound > voxel_upper_bound です。クランプ時に上限が優先されます。",
                 icon="⚠️",
             )
+
+        # 簡易プレビュー: 現在の設定での予測ブロック数
+        sample_footprints = [(5, "5×5 小屋"), (10, "10×10 区画"), (20, "20×20 大型")]
+        preview_lines: list[str] = []
+        for fp, label in sample_footprints:
+            est = max(cfg.voxel_lower_bound, min(cfg.voxel_upper_bound, fp))
+            est_blocks = int(6 * est * est)
+            preview_lines.append(f"- {label}: target_voxel={est} → ~{est_blocks} blocks")
+        st.caption(
+            "現在の設定での予測ブロック数（表面のみの概算）:\n\n"
+            + "\n".join(preview_lines)
+        )
 
     # --- Seed ------------------------------------------------------------
     with st.expander("🎲 Seed と補助（再現性・前処理）— 同じ結果を再現したい時用", expanded=False):
@@ -542,6 +567,105 @@ def _section_tripo() -> None:
             st.rerun()
 
 
+def _section_minecraft_assets() -> None:
+    st.subheader("🧱 Minecraft アセット (公式テクスチャ)")
+    st.caption(
+        "初回起動時に Mojang 公式 version manifest から最新 release の "
+        "`client.jar` を**自動ダウンロード**し、`assets/minecraft/textures/block/` "
+        "の PNG を 320×320 のアトラスに焼き直して GLB プレビューに貼り付けます。"
+    )
+
+    state = _mc_runtime.get_state()
+    stage = state.get("stage", "pending")
+    message = state.get("message", "")
+    version = state.get("version")
+    tex_count = int(state.get("texture_count") or 0)
+    jar_path = state.get("jar_path")
+
+    stage_label = {
+        "pending": ("⏳ 起動待ち", "info"),
+        "manifest": ("🌐 manifest 取得中", "info"),
+        "download": ("⬇️ client.jar をダウンロード中", "info"),
+        "downloaded": ("📦 jar 検証完了", "info"),
+        "extract": ("🗂️ PNG 抽出中", "info"),
+        "ready": ("✅ 準備完了", "success"),
+        "failed": ("⚠️ 取得失敗 (手作りアトラスで継続)", "warning"),
+        "disabled": ("⏸️ 手作りアトラス固定", "info"),
+    }.get(stage, (f"ℹ️ {stage}", "info"))
+
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        st.metric("ステータス", stage_label[0])
+    with col_b:
+        st.metric("Minecraft version", version or "—")
+    with col_c:
+        st.metric("抽出済みテクスチャ", f"{tex_count}" if tex_count else "—")
+
+    if message:
+        getattr(st, stage_label[1])(message)
+
+    if jar_path:
+        try:
+            from pathlib import Path as _P
+            size_mb = _P(jar_path).stat().st_size / (1024 * 1024)
+            st.caption(f"📦 `{jar_path}` — {size_mb:.1f} MB")
+        except OSError:
+            st.caption(f"📦 `{jar_path}`")
+
+    prefs = _mc_prefs.load()
+
+    new_force = st.toggle(
+        "手作りアトラスを強制使用 (公式 jar を無視)",
+        value=bool(prefs.force_procedural),
+        key="bnn_mc_force_procedural",
+        help=(
+            "デバッグやライセンス回避の用途で公式アセットを使わないモード。"
+            "ON のまま保存すると次回起動以降も jar の取得をスキップします。"
+        ),
+    )
+    if new_force != prefs.force_procedural:
+        prefs.force_procedural = new_force
+        _mc_prefs.save(prefs)
+        _mc_runtime.set_force_procedural(new_force)
+        if new_force:
+            st.toast("手作りアトラス固定モードに切り替えました。", icon="✏️")
+        else:
+            _mc_runtime.restart()
+            st.toast("公式アセットの再取得を開始します。", icon="🌐")
+        st.rerun()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if secondary_button(
+            "🔄 アセットを再ダウンロード",
+            key="bnn_mc_restart",
+        ):
+            _mc_runtime.restart()
+            st.toast("再ダウンロードを開始しました。", icon="🌐")
+            st.rerun()
+    with col2:
+        if danger_button(
+            "🧹 jar キャッシュを削除",
+            key="bnn_mc_clear",
+            confirm_title="`~/.cache/bananacraft/mc/` を削除しますか?",
+            confirm_body=(
+                "ダウンロード済みの client.jar と抽出した PNG が全部消えます。"
+                "次回プレビュー時に自動で再取得されます。"
+            ),
+            confirm_label="削除する",
+        ):
+            removed = _mc_runtime.clear_jar_cache()
+            _mc_runtime.restart()
+            st.toast(f"{removed} エントリ削除しました。", icon="🧹")
+            st.rerun()
+
+    st.caption(
+        "ℹ️ ライセンス: Minecraft EULA に従い**個人利用範囲のみ**。"
+        "Bananacraft の配布物に jar は同梱されません。"
+        "キャッシュ場所: `~/.cache/bananacraft/mc/`"
+    )
+
+
 def _section_terraformer() -> None:
     st.subheader("🚜 Terraformer (Clear 200×200)")
     ox, oy, oz = S.project_origin()
@@ -621,6 +745,8 @@ def render() -> None:
     _section_world_origin()
     st.divider()
     _section_tripo()
+    st.divider()
+    _section_minecraft_assets()
     st.divider()
     _section_terraformer()
     st.divider()
