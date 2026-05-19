@@ -1,11 +1,20 @@
 """
-Block Assigner - Match voxel colors to Minecraft blocks using atlas data
+Block Assigner - Match voxel colors to Minecraft blocks using atlas data.
+
+色距離はデフォルトで CIE-LAB の ΔE (CIE76 ベース) を使う。RGB ユークリッドより
+人間の視覚に近く、「茶色羊毛 vs oak_log」「黄色羊毛 vs honey_block」のような
+近い色帯での誤マッチを減らせる。
+
+また、`palette` が `BlockAssigner.DEFAULT_PALETTE` ではなくテーマ別に絞られたリスト
+として渡された場合は、リスト先頭ほど「主役素材」として優先するよう距離に小さな
+ボーナスを乗せる（自然素材ボーナス）。同色帯で `honey_block` と `yellow_concrete`
+が拮抗したとき、パレット先頭の `honey_block` を選びやすくする。
 """
 import json
 import numpy as np
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Optional, Literal
+from typing import Literal, Optional
 from .voxel_mesh import VoxelMesh, Voxel, FaceVisibility
 from .dithering import apply_dithering, bin_color
 from .smooth_block_placer import (
@@ -15,6 +24,50 @@ from .smooth_block_placer import (
     BlockShape,
     SmoothBlockInfo
 )
+
+try:
+    import colour as _colour  # type: ignore
+    _HAS_COLOUR = True
+except ImportError:
+    _colour = None
+    _HAS_COLOUR = False
+
+
+def _rgb_to_lab(rgb: np.ndarray) -> np.ndarray:
+    """sRGB [0,1] -> CIE Lab. (N, 3) または (3,) どちらでも受け取る。"""
+    arr = np.asarray(rgb, dtype=np.float64)
+    if arr.ndim == 1:
+        arr = arr.reshape(1, 3)
+        squeeze = True
+    else:
+        squeeze = False
+    arr = np.clip(arr[:, :3], 0.0, 1.0)
+    if _HAS_COLOUR:
+        lab = _colour.XYZ_to_Lab(_colour.sRGB_to_XYZ(arr))
+    else:
+        # フォールバック: D65 simplified sRGB -> XYZ -> Lab
+        def _srgb_inv_gamma(c: np.ndarray) -> np.ndarray:
+            return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+        lin = _srgb_inv_gamma(arr)
+        m = np.array([
+            [0.4124564, 0.3575761, 0.1804375],
+            [0.2126729, 0.7151522, 0.0721750],
+            [0.0193339, 0.1191920, 0.9503041],
+        ])
+        xyz = lin @ m.T
+        ref_white = np.array([0.95047, 1.0, 1.08883])
+        norm = xyz / ref_white
+        eps = (6 / 29) ** 3
+        kappa = 1 / 3 * (29 / 6) ** 2
+
+        def f(t: np.ndarray) -> np.ndarray:
+            return np.where(t > eps, np.cbrt(t), kappa * t + 4 / 29)
+        fx, fy, fz = f(norm[:, 0]), f(norm[:, 1]), f(norm[:, 2])
+        L = 116.0 * fy - 16.0
+        a = 500.0 * (fx - fy)
+        b = 200.0 * (fy - fz)
+        lab = np.stack([L, a, b], axis=1)
+    return lab[0] if squeeze else lab
 
 
 @dataclass
@@ -151,26 +204,90 @@ class BlockAssigner:
     def __init__(
         self,
         atlas: Optional[BlockAtlas] = None,
-        palette: Optional[list[str]] = None
+        palette: Optional[list[str]] = None,
+        *,
+        palette_bias_strength: float = 0.0,
     ):
         """
         Initialize the block assigner.
         
         Args:
             atlas: Block atlas to use, or None to load default
-            palette: List of block names to use, or None for default palette
+            palette: List of block names to use, or None for default palette.
+                When a curated theme palette is provided, the order matters:
+                blocks earlier in the list get a small distance bonus
+                (controlled by `palette_bias_strength`) so that they are
+                preferred over later candidates when colors are close.
+            palette_bias_strength: ΔE units of bonus given to the first palette
+                entry; the last entry gets zero. Set to 0.0 to disable bias.
+                If None and palette is curated (different from DEFAULT_PALETTE)
+                we auto-set this to 4.0 (~ just-noticeable LAB difference).
         """
         self.atlas = atlas or BlockAtlas()
+        provided_palette = palette is not None
         self.palette = palette or self.DEFAULT_PALETTE
         
         # Filter palette to only include blocks that exist in atlas
         self.palette = [b for b in self.palette if b in self.atlas.blocks]
         
+        # Auto-enable palette bias when a curated theme palette is provided.
+        if palette_bias_strength <= 0 and provided_palette:
+            palette_bias_strength = 4.0
+        self.palette_bias_strength = float(palette_bias_strength)
+
+        # Precompute LAB colors for the active palette (global avg).
+        self._palette_lab_global = self._compute_palette_lab(use_faces=False)
+        # Face-specific LAB cache: face_visibility bitmask -> (M, 3) Lab.
+        self._palette_lab_face_cache: dict[int, np.ndarray] = {}
+
+        # Per-entry palette bias in ΔE units (positive = subtract from error).
+        n = len(self.palette)
+        if n > 1 and self.palette_bias_strength > 0:
+            # Linear from `palette_bias_strength` down to 0 over the palette.
+            self._palette_bias = np.linspace(
+                self.palette_bias_strength, 0.0, n, dtype=np.float64
+            )
+        else:
+            self._palette_bias = np.zeros(n, dtype=np.float64)
+
         # Cache for color -> block lookups
         self._cache: dict[int, str] = {}
-    
+
+    def _compute_palette_lab(self, use_faces: bool, face_visibility: int = 0) -> np.ndarray:
+        """Compute (M, 3) LAB array for the current palette.
+
+        When `use_faces` is True, average across the visible faces specified by
+        `face_visibility` (bitmask compatible with `FaceVisibility`).
+        """
+        if not use_faces:
+            rgbs = np.stack([self.atlas.blocks[name].color[:3] for name in self.palette])
+            return _rgb_to_lab(rgbs)
+
+        face_axes = [
+            (FaceVisibility.UP, "up"),
+            (FaceVisibility.DOWN, "down"),
+            (FaceVisibility.NORTH, "north"),
+            (FaceVisibility.SOUTH, "south"),
+            (FaceVisibility.EAST, "east"),
+            (FaceVisibility.WEST, "west"),
+        ]
+        rgbs = np.empty((len(self.palette), 3), dtype=np.float64)
+        for i, name in enumerate(self.palette):
+            block = self.atlas.blocks[name]
+            colors = []
+            for flag, fname in face_axes:
+                if face_visibility & int(flag):
+                    face = block.faces.get(fname)
+                    if face is not None:
+                        colors.append(face.color[:3])
+            if not colors:
+                rgbs[i] = block.color[:3]
+            else:
+                rgbs[i] = np.mean(np.stack(colors), axis=0)
+        return _rgb_to_lab(rgbs)
+
     def _color_distance_squared(self, c1: np.ndarray, c2: np.ndarray) -> float:
-        """Calculate squared RGB distance between two colors"""
+        """Calculate squared RGB distance between two colors (legacy)."""
         return float(np.sum((c1[:3] - c2[:3]) ** 2))
     
     def _get_contextual_color(
@@ -225,46 +342,46 @@ class BlockAssigner:
         error_weight: float = 0.0
     ) -> str:
         """
-        Find the best matching block for a color.
-        
+        Find the best matching block for a color, using CIE-LAB ΔE.
+
         Args:
             color: RGBA color [0, 1]
             face_visibility: Which faces are visible
             use_contextual: Whether to use face-specific colors
-            error_weight: Weight for texture variance in error calculation
-            
+            error_weight: (unused, kept for API compatibility)
+
         Returns:
             Block name that best matches the color
         """
         # Create cache key from color (quantize to reduce cache size)
-        color_255 = (color[:3] * 255).astype(int)
+        color_255 = (np.clip(color[:3], 0.0, 1.0) * 255).astype(int)
         cache_key = (color_255[0] << 16) | (color_255[1] << 8) | color_255[2]
         cache_key = (cache_key << 6) | int(face_visibility)
-        
+
         if cache_key in self._cache:
             return self._cache[cache_key]
-        
-        # Find best matching block
-        best_block = None
-        best_error = float('inf')
-        
-        for block_name in self.palette:
-            block = self.atlas.blocks[block_name]
-            
-            if use_contextual and face_visibility != FaceVisibility.NONE:
-                block_color, block_std = self._get_contextual_color(block, face_visibility)
-            else:
-                block_color = block.color
-                block_std = 0.0
-            
-            # Calculate error (RGB distance + optional std weighting)
-            rgb_error = self._color_distance_squared(color, block_color)
-            total_error = rgb_error * (1 - error_weight) + block_std * error_weight
-            
-            if total_error < best_error:
-                best_error = total_error
-                best_block = block_name
-        
+
+        target_lab = _rgb_to_lab(color[:3])
+
+        if use_contextual and face_visibility != FaceVisibility.NONE:
+            fv_key = int(face_visibility)
+            palette_lab = self._palette_lab_face_cache.get(fv_key)
+            if palette_lab is None:
+                palette_lab = self._compute_palette_lab(
+                    use_faces=True, face_visibility=fv_key
+                )
+                self._palette_lab_face_cache[fv_key] = palette_lab
+        else:
+            palette_lab = self._palette_lab_global
+
+        # ΔE (CIE76) = Euclidean in Lab
+        deltas = np.linalg.norm(palette_lab - target_lab[np.newaxis, :], axis=1)
+        # Apply palette ordering bias: subtract bias from delta to make earlier
+        # entries effectively "closer".
+        biased = deltas - self._palette_bias
+        best_idx = int(np.argmin(biased))
+        best_block = self.palette[best_idx]
+
         self._cache[cache_key] = best_block
         return best_block
     

@@ -91,9 +91,22 @@ def load_mesh(file_path: str | Path) -> MeshData:
     file_path = Path(file_path)
     if not file_path.exists():
         raise FileNotFoundError(f"Mesh file not found: {file_path}")
-    
-    # Load the mesh using trimesh
-    scene_or_mesh = trimesh.load(str(file_path))
+
+    ext = file_path.suffix.lower()
+    if ext == ".fbx":
+        raise ValueError(
+            "FBX 形式はこの環境では読み込めません。"
+            "Settings の Tripo3D 設定で **quad を OFF**、"
+            "Texture Model を使う場合は最新版 (v3.0-20250812) を選び、"
+            "「Tripo を必ず再実行」でブループリントを作り直してください。"
+        )
+
+    # 拡張子を明示して trimesh に渡す（誤判定防止）
+    load_kwargs: dict = {}
+    if ext in (".glb", ".gltf", ".obj", ".stl", ".ply"):
+        load_kwargs["file_type"] = ext.lstrip(".")
+
+    scene_or_mesh = trimesh.load(str(file_path), **load_kwargs)
     
     # Handle scenes (multi-mesh files like GLB)
     if isinstance(scene_or_mesh, trimesh.Scene):

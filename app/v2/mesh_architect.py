@@ -12,20 +12,22 @@ ProgressCallback = Callable[[str, Optional[str]], None]
 
 try:
     from file_manager import FileManager
-    from tripo_client import TripoClient
+    from tripo_client import TripoClient, TripoClientError
     from voxelizer.mesh_loader import load_mesh
     from voxelizer.bvh_ray_voxelizer import voxelize_mesh
     from voxelizer.block_assigner import BlockAssigner
     from v2.semantic_pass import run_semantic_pass, clamp_semantic_to_bbox
     from v2.instructions_synthesizer import build_minimal_instructions
+    from v2.tripo_config import TripoConfig
 except ImportError:
     from app.file_manager import FileManager
-    from app.tripo_client import TripoClient
+    from app.tripo_client import TripoClient, TripoClientError
     from app.voxelizer.mesh_loader import load_mesh
     from app.voxelizer.bvh_ray_voxelizer import voxelize_mesh
     from app.voxelizer.block_assigner import BlockAssigner
     from app.v2.semantic_pass import run_semantic_pass, clamp_semantic_to_bbox
     from app.v2.instructions_synthesizer import build_minimal_instructions
+    from app.v2.tripo_config import TripoConfig
 
 
 def _assigned_to_blocks(assigned) -> List[Dict[str, Any]]:
@@ -126,15 +128,24 @@ def _mesh_cache_paths(project_dir: str, zone_id: Any) -> List[str]:
 
 
 def _pick_mesh_cache(paths: List[str]) -> Optional[str]:
+    """キャッシュ済みメッシュから **mesh_loader が読める形式** を優先順位で選ぶ。
+
+    FBX は voxelizer.mesh_loader が扱えないので、ローダーがサポートする
+    拡張子のみに絞り込んでから優先順位を付ける。何も該当しなければ None
+    （= 再ダウンロード）。
+    """
     if not paths:
         return None
-    order = {".glb": 0, ".gltf": 1, ".obj": 2, ".fbx": 3, ".stl": 4, ".ply": 5}
+    order = {".glb": 0, ".gltf": 1, ".obj": 2, ".stl": 3, ".ply": 4}
 
     def sort_key(p: str) -> Tuple[int, float]:
         ext = os.path.splitext(p)[1].lower()
-        return order.get(ext, 99), -os.path.getmtime(p)
+        return order[ext], -os.path.getmtime(p)
 
-    return sorted(paths, key=sort_key)[0]
+    loadable = [p for p in paths if os.path.splitext(p)[1].lower() in order]
+    if not loadable:
+        return None
+    return sorted(loadable, key=sort_key)[0]
 
 
 def _clear_mesh_cache(fm: FileManager, zone_id: Any) -> None:
@@ -181,6 +192,7 @@ class MeshArchitect:
         trip_verbose: bool = False,
         progress: Optional[ProgressCallback] = None,
         palette: Optional[List[str]] = None,
+        tripo_config: Optional["TripoConfig"] = None,
     ) -> Dict[str, Any]:
         def _p(label: str, detail: Optional[str] = None) -> None:
             if progress is not None:
@@ -195,9 +207,16 @@ class MeshArchitect:
 
         width = int(building_info.get("width") or building_info.get("position", {}).get("width") or 32)
         depth = int(building_info.get("depth") or building_info.get("position", {}).get("depth") or 32)
-        # 下限を 28 に引き上げ、最大 max(width, depth) * 2 まで許容（96 cap は据え置き）。
-        # 10x10 の小さな建物でも 28 voxel 解像度を確保してディテールが潰れないようにする。
-        target_voxel = max(28, min(96, max(width, depth) * 2))
+        # 決定論的サイズ:
+        # 底面 (max(width, depth)) をそのまま voxel 解像度に使う。建物の敷地と
+        # ボクセル数が一致するので、再生成しても底面サイズが揃う。
+        # voxel_lower_bound / voxel_upper_bound でユーザーが解像度を制御できる。
+        # 1 voxel ≒ 1 Minecraft ブロックにしたいなら下限を 12 程度に下げる。
+        lo = int(tripo_config.voxel_lower_bound) if tripo_config else 12
+        hi = int(tripo_config.voxel_upper_bound) if tripo_config else 48
+        if lo > hi:
+            lo, hi = hi, lo
+        target_voxel = max(lo, min(hi, max(width, depth)))
 
         mesh_base = f"mesh_{zone_id}"
 
@@ -212,7 +231,24 @@ class MeshArchitect:
         if cached_mesh is None:
             _p("① 画像を Tripo3D に送信", "GLB 生成タスクを作成しています")
             client = TripoClient()
-            task_id = client.create_image_task(image_path)
+            if tripo_config is not None:
+                task_kwargs = tripo_config.to_tripo_kwargs()
+                trip_meta["tripo_config"] = {
+                    "model_version": tripo_config.model_version,
+                    "style": tripo_config.style,
+                    "geometry_quality": tripo_config.geometry_quality,
+                    "face_limit": tripo_config.face_limit,
+                    "texture_quality": tripo_config.texture_quality,
+                    "model_seed": tripo_config.model_seed,
+                    "texture_seed": tripo_config.texture_seed,
+                    "voxel_lower_bound": tripo_config.voxel_lower_bound,
+                    "voxel_upper_bound": tripo_config.voxel_upper_bound,
+                    "use_texture_model": tripo_config.use_texture_model,
+                    "texture_model_version": tripo_config.texture_model_version,
+                }
+                task_id = client.create_image_task(image_path, **task_kwargs)
+            else:
+                task_id = client.create_image_task(image_path)
             trip_meta["task_id"] = task_id
             _p("② Tripo3D で 3D メッシュを生成中", f"task_id = {task_id}（推定 60〜120 秒）")
             task = client.wait_for_task(task_id, verbose=trip_verbose)
@@ -223,12 +259,72 @@ class MeshArchitect:
             else:
                 trip_meta["task_dump"] = f"tripo_task_{zone_id}.json"
 
-            url = TripoClient.model_url_from_task(task)
-            trip_meta["model_url"] = url
-            _p("③ GLB をダウンロード", os.path.basename(url) if url else None)
-            mesh_path = client.download_model(url, self.fm.project_dir, mesh_base)
+            base_url = TripoClient.model_url_from_task(task)
+            trip_meta["base_model_url"] = base_url
+            final_url = base_url
+            final_task_id_for_download = task_id
+
+            # --- Optional: stylize_model でポストプロセススタイル適用 ---
+            if tripo_config is not None:
+                stylize_kwargs = tripo_config.to_stylize_kwargs()
+            else:
+                stylize_kwargs = None
+            if stylize_kwargs is not None:
+                style_name = stylize_kwargs["style"]
+                _p(
+                    f"②.3 後処理スタイル適用 ({style_name})",
+                    f"stylize_model: block_size={stylize_kwargs['block_size']}",
+                )
+                try:
+                    style_task_id = client.create_stylize_task(
+                        original_model_task_id=task_id,
+                        **stylize_kwargs,
+                    )
+                    trip_meta["stylize_task_id"] = style_task_id
+                    style_task = client.wait_for_task(style_task_id, verbose=trip_verbose)
+                    try:
+                        self.fm.save_json(f"tripo_stylize_task_{zone_id}.json", style_task)
+                    except (TypeError, ValueError):
+                        pass
+                    final_url = TripoClient.model_url_from_task(style_task)
+                    trip_meta["stylize_model_url"] = final_url
+                    final_task_id_for_download = style_task_id
+                except TripoClientError as e:
+                    # スタイル適用に失敗してもベースメッシュで続行する
+                    trip_meta["stylize_error"] = str(e)
+                    _p("②.3 スタイル適用に失敗（ベースメッシュで続行）", str(e))
+
+            # --- Optional: Texture Model 後段精製 ---
+            if tripo_config is not None and tripo_config.use_texture_model:
+                _p(
+                    "②.5 Texture Model で高品質テクスチャを再生成",
+                    f"model_version = {tripo_config.texture_model_version}",
+                )
+                tex_kwargs = tripo_config.to_texture_kwargs()
+                tex_task_id = client.create_texture_task(
+                    original_model_task_id=task_id,
+                    image_path=image_path,
+                    **tex_kwargs,
+                )
+                trip_meta["texture_task_id"] = tex_task_id
+                tex_task = client.wait_for_task(tex_task_id, verbose=trip_verbose)
+                try:
+                    self.fm.save_json(f"tripo_texture_task_{zone_id}.json", tex_task)
+                except (TypeError, ValueError):
+                    pass
+                final_url = TripoClient.model_url_from_task(tex_task)
+                trip_meta["texture_model_url"] = final_url
+                final_task_id_for_download = tex_task_id
+
+            trip_meta["model_url"] = final_url
+            _p(
+                "③ GLB をダウンロード",
+                os.path.basename(final_url) if final_url else None,
+            )
+            mesh_path = client.download_model(final_url, self.fm.project_dir, mesh_base)
             trip_meta["saved_path"] = mesh_path
             trip_meta["saved_ext"] = os.path.splitext(mesh_path)[1].lower()
+            trip_meta["download_source_task"] = final_task_id_for_download
         else:
             mesh_path = cached_mesh
             trip_meta["cached_mesh"] = mesh_path
@@ -237,8 +333,25 @@ class MeshArchitect:
 
         _p("④ メッシュを読み込み", os.path.basename(mesh_path))
         mesh = load_mesh(mesh_path)
-        _p("⑤ ボクセル化", f"target voxel size = {target_voxel}")
-        voxel_mesh = voxelize_mesh(mesh, target_size=target_voxel, constraint_axis="y")
+
+        # 決定論的サイズ正規化:
+        # 同じ building_info で毎回同じ底面サイズになるよう、メッシュの水平
+        # 寸法のうち長い方を constraint 軸に選ぶ。これで Tripo3D の出力寸法
+        # に左右されず、`max(width, depth)` を底面の実サイズとして固定できる。
+        dims = mesh.dimensions  # (x, y, z)
+        if dims[0] >= dims[2]:
+            constraint_axis = "x"
+            constraint_label = "x (footprint width)"
+        else:
+            constraint_axis = "z"
+            constraint_label = "z (footprint depth)"
+        _p(
+            "⑤ ボクセル化",
+            f"target voxel size = {target_voxel} along {constraint_label}",
+        )
+        voxel_mesh = voxelize_mesh(
+            mesh, target_size=target_voxel, constraint_axis=constraint_axis
+        )
 
         if palette:
             short = ", ".join(p.split(":", 1)[-1] for p in palette[:6])

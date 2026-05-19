@@ -41,6 +41,12 @@ def ensure_session_defaults() -> None:
     for k, v in _DEFAULTS.items():
         if k not in st.session_state:
             st.session_state[k] = v
+    if "tripo_config" not in st.session_state:
+        try:
+            from v2.tripo_config import load_tripo_config
+        except ImportError:
+            from app.v2.tripo_config import load_tripo_config  # pragma: no cover
+        st.session_state["tripo_config"] = load_tripo_config()
 
 
 # ---- Convenience accessors -------------------------------------------

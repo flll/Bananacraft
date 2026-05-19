@@ -354,12 +354,43 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
                     suffix = " ..." if len(palette) > 6 else ""
                     p.write(f"テーマパレット: {len(palette)} blocks → {short}{suffix}")
 
+                tripo_cfg = st.session_state.get("tripo_config")
+                if tripo_cfg is not None:
+                    longest = max(int(b_info["width"]), int(b_info["depth"]))
+                    lo = int(tripo_cfg.voxel_lower_bound)
+                    hi = int(tripo_cfg.voxel_upper_bound)
+                    if lo > hi:
+                        lo, hi = hi, lo
+                    est_voxel = max(lo, min(hi, longest))
+                    if tripo_cfg.style:
+                        style_label = (
+                            f"{tripo_cfg.style} (stylize_model, "
+                            f"block_size={tripo_cfg.style_block_size})"
+                        )
+                    else:
+                        style_label = "なし"
+                    p.write(
+                        f"Tripo 設定: style={style_label} / face_limit={tripo_cfg.face_limit} "
+                        f"/ geometry={tripo_cfg.geometry_quality}"
+                    )
+                    p.write(
+                        f"ボクセル解像度: target_voxel≈{est_voxel} "
+                        f"(lo={lo}, hi={hi}, footprint={longest})"
+                    )
+                    if tripo_cfg.use_texture_model:
+                        p.write(
+                            f"Texture Model: ON ({tripo_cfg.texture_model_version}, "
+                            f"bake={tripo_cfg.texture_bake}) "
+                            "→ 後段でテクスチャを再生成します（+クレジット / +時間）"
+                        )
+
                 result = arc.build_from_image(
                     s_path,
                     b_info,
                     force=bool(force_tripo),
                     progress=_cb,
                     palette=palette,
+                    tripo_config=tripo_cfg,
                 )
                 blocks_out = result["blocks"]
                 inst_out = result["instructions"]

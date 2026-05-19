@@ -8,13 +8,14 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import unquote, urlparse
 
 import requests
 
 DEFAULT_BASE_URL = "https://api.tripo3d.ai/v2/openapi"
 DEFAULT_MODEL_VERSION = "v2.5-20250123"
+DEFAULT_TEXTURE_MODEL_VERSION = "v3.0-20250812"
 
 _MODEL_EXTS = frozenset({".glb", ".gltf", ".obj", ".fbx", ".stl", ".ply"})
 
@@ -118,10 +119,25 @@ class TripoClient:
         auto_size: bool = False,
         orientation: str = "default",
         quad: bool = False,
+        model_seed: Optional[int] = None,
+        texture_seed: Optional[int] = None,
+        enable_image_autofix: bool = False,
     ) -> str:
         """
         image_to_model タスクを投入。task_id を返す。
-        quad/auto_size/orientation は公式 SDK 既定に合わせる（quad=True だと OBJ/FBX になりやすい）。
+
+        Args:
+            model_seed / texture_seed: 再現性のため固定したいシード。None なら API
+                既定 (42) を Tripo 側に任せる。
+            enable_image_autofix: True なら Tripo 側で前処理を自動補正する。
+            quad: True だと OBJ/FBX 出力になりやすいので注意。
+
+        Note:
+            voxel / minecraft / lego のような post-process スタイルは
+            `image_to_model` の `style` パラメータでは指定できない（Tripo3D
+            サーバ側で受け付けず `file_type 'fbx' not supported` 等の不可解な
+            エラーを返す）。 `create_stylize_task` を別タスクとして
+            後段実行することで適用する。
         """
         file_field = self._build_file_field(image_path)
         payload: Dict[str, Any] = {
@@ -138,6 +154,13 @@ class TripoClient:
             "orientation": orientation,
             "quad": quad,
         }
+        if model_seed is not None:
+            payload["model_seed"] = int(model_seed)
+        if texture_seed is not None:
+            payload["texture_seed"] = int(texture_seed)
+        if enable_image_autofix:
+            payload["enable_image_autofix"] = True
+
         url = self._url("/task")
         resp = self.session.post(url, json=payload, timeout=60)
         data = self._raise_for_api(resp)
@@ -145,6 +168,116 @@ class TripoClient:
         tid = inner.get("task_id")
         if not tid:
             raise TripoClientError(f"create_task missing task_id: {data}")
+        return str(tid)
+
+    def create_stylize_task(
+        self,
+        original_model_task_id: str,
+        *,
+        style: str,
+        block_size: int = 80,
+    ) -> str:
+        """stylize_model タスクを投入。task_id を返す。
+
+        既存の 3D モデルに対して後処理スタイル (voxel / minecraft / lego /
+        voronoi) を適用する別タスク。
+
+        Args:
+            original_model_task_id: 前段 (image_to_model など) の task_id。
+            style: "voxel" / "minecraft" / "lego" / "voronoi" のいずれか。
+            block_size: ボクセル/ブロックの粒度 (デフォルト 80)。
+                小さいほど粒度が細かくなり、ブロック数が増える。
+        """
+        if not style:
+            raise ValueError("create_stylize_task: style is required")
+        payload: Dict[str, Any] = {
+            "type": "stylize_model",
+            "original_model_task_id": original_model_task_id,
+            "style": style,
+            "block_size": int(block_size),
+        }
+        url = self._url("/task")
+        resp = self.session.post(url, json=payload, timeout=60)
+        data = self._raise_for_api(resp)
+        inner = data.get("data") or {}
+        tid = inner.get("task_id")
+        if not tid:
+            raise TripoClientError(f"create_stylize_task missing task_id: {data}")
+        return str(tid)
+
+    def create_texture_task(
+        self,
+        original_model_task_id: str,
+        *,
+        image_path: Optional[str] = None,
+        text_prompt: Optional[str] = None,
+        model_version: str = DEFAULT_TEXTURE_MODEL_VERSION,
+        texture: bool = True,
+        pbr: bool = True,
+        texture_quality: str = "detailed",
+        texture_alignment: str = "original_image",
+        texture_seed: Optional[int] = None,
+        bake: bool = True,
+        part_names: Optional[List[str]] = None,
+        compress: Optional[str] = None,
+    ) -> str:
+        """texture_model タスクを投入。task_id を返す。
+
+        image_to_model の出力に対して、テクスチャだけを高品質に再生成する後段ステップ。
+        v3.0-20250812 のドキュメント:
+        https://docs.tripo3d.ai/texture/texture-model-v3-0-20250812.html
+
+        Args:
+            original_model_task_id: 前段 (image_to_model など) の task_id。
+                `Turbo-v1.0-20250506` 以降または `v2.0-20240919` 以降のモデルで生成された
+                タスクである必要がある。
+            image_path: texture_prompt として使う画像のローカルパスまたは URL。
+                text_prompt と排他的。
+            text_prompt: テクスチャ生成のテキストプロンプト。image_path と排他的。
+            model_version: テクスチャモデルのバージョン (デフォルト v3.0-20250812)。
+            texture_quality: "detailed" で 10 クレジット追加。
+            bake: True でテクスチャ焼き付け (推奨)。
+        """
+        if not image_path and not text_prompt:
+            raise ValueError(
+                "create_texture_task: image_path か text_prompt のどちらかが必要です。"
+            )
+        if image_path and text_prompt:
+            raise ValueError(
+                "create_texture_task: image_path と text_prompt は排他的です。"
+            )
+
+        texture_prompt: Dict[str, Any] = {}
+        if image_path:
+            texture_prompt["image"] = self._build_file_field(image_path)
+        elif text_prompt:
+            texture_prompt["text"] = text_prompt
+
+        payload: Dict[str, Any] = {
+            "type": "texture_model",
+            "original_model_task_id": original_model_task_id,
+            "model_version": model_version,
+            "texture_prompt": texture_prompt,
+            "texture": bool(texture),
+            "pbr": bool(pbr),
+            "texture_quality": texture_quality,
+            "texture_alignment": texture_alignment,
+            "bake": bool(bake),
+        }
+        if texture_seed is not None:
+            payload["texture_seed"] = int(texture_seed)
+        if part_names:
+            payload["part_names"] = list(part_names)
+        if compress:
+            payload["compress"] = compress
+
+        url = self._url("/task")
+        resp = self.session.post(url, json=payload, timeout=60)
+        data = self._raise_for_api(resp)
+        inner = data.get("data") or {}
+        tid = inner.get("task_id")
+        if not tid:
+            raise TripoClientError(f"create_texture_task missing task_id: {data}")
         return str(tid)
 
     def get_task(self, task_id: str) -> Dict[str, Any]:
@@ -178,11 +311,30 @@ class TripoClient:
 
     @staticmethod
     def model_url_from_task(task: Dict[str, Any]) -> str:
+        """タスク output から **GLB を最優先**してダウンロード URL を選ぶ。
+
+        Tripo3D は output に複数フォーマットを並べて返してくる:
+        ``{model, pbr_model, base_model, rendered_image, ...}``。
+        texture_model / stylize_model のレスポンスでは ``pbr_model`` に FBX URL が、
+        ``model`` 側に GLB URL が入っていることがある。
+        Bananacraft の mesh_loader は GLB しか扱えないので、拡張子で GLB を優先する。
+        """
         out = task.get("output") or {}
-        url = out.get("pbr_model") or out.get("model")
-        if not url:
+        candidates = [
+            out.get("pbr_model"),
+            out.get("model"),
+            out.get("base_model"),
+        ]
+        candidates = [str(u) for u in candidates if u]
+        if not candidates:
             raise TripoClientError(f"No model URL in task output: {out}")
-        return str(url)
+
+        # 拡張子優先順: .glb > .gltf > .obj > .stl > .ply > .fbx
+        order = {".glb": 0, ".gltf": 1, ".obj": 2, ".stl": 3, ".ply": 4, ".fbx": 9}
+        def _rank(url: str) -> int:
+            return order.get(_extension_from_url(url), 5)
+        candidates.sort(key=_rank)
+        return candidates[0]
 
     @staticmethod
     def _validate_downloaded_file(path: str, ext: str) -> None:
