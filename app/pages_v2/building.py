@@ -506,6 +506,19 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
                 tripo_cfg = st.session_state.get("tripo_config")
                 if tripo_cfg is not None:
                     longest = max(int(b_info["width"]), int(b_info["depth"]))
+                    if tripo_cfg.auto_size_from_zone:
+                        tripo_cfg = tripo_cfg.with_building_override(longest)
+                        p.write(
+                            f"自動サイズ設定: ゾーン最長辺 {longest} blocks "
+                            f"→ voxel=[{tripo_cfg.voxel_lower_bound}, "
+                            f"{tripo_cfg.voxel_upper_bound}], "
+                            f"block_size={tripo_cfg.style_block_size}"
+                            "（Concept 画像の指定サイズと同期）"
+                        )
+                    else:
+                        p.write(
+                            "自動サイズ設定: OFF（Settings の voxel/block_size をそのまま使用）"
+                        )
                     lo = int(tripo_cfg.voxel_lower_bound)
                     hi = int(tripo_cfg.voxel_upper_bound)
                     if lo > hi:

@@ -398,6 +398,49 @@ gamerule sendCommandFeedback true
 - `style=minecraft` のときの URL は拡張子なしまたは `.schem` で、ファイル先頭は **`0x1f 0x8b`（gzip マジック）**。[app/tripo_client.py](../app/tripo_client.py) の `_extension_from_url` が拡張子無しを `.glb` と誤判定しないよう、stylize + minecraft 時は **schem 優先**でロジック分岐すること。
 - `model_url_from_task` には `mesh_only=False` または専用フラグ（例: `prefer_schem=True`）を追加し、Building の進行状況を `glb_ready` / `schem_ready` の 2 状態で表現するのが良い。
 
+### 13.11 ゾーンサイズと Tripo 設定の自動連動
+
+**ユーザー視点の方針（重要）**: 「voxel 設定をユーザーが触らなくていい」状態を維持する。建物ごとの規模は City Plan のゾーン `width × depth` で既に決まっているので、画像生成プロンプトと Tripo Blueprint の両方で **同じ値を単一の情報源** として使う。
+
+**情報の流れ**:
+
+```mermaid
+flowchart LR
+  Zone["zone.position.width x depth"]
+  Zone --> Prompt["generate_concept_image\n幅 W x 奥行 D x 高さ約 H ブロック\n合計 N ブロック四方"]
+  Zone --> Override["TripoConfig.with_building_override(N)"]
+  Override --> Vox["voxel_lower = voxel_upper = N\n(GLB 経路)"]
+  Override --> Style["style_block_size = stylize_block_for_target(N)\n(schem 経路)"]
+  Adv["Settings 上級者モード"] -.fallback.-> Vox
+  Adv -.fallback.-> Style
+```
+
+**実装ポイント**:
+
+| ファイル | 役割 |
+|----------|------|
+| [app/v2/tripo_config.py](../app/v2/tripo_config.py) | `auto_size_from_zone: bool = True` フィールド、`with_building_override(target_blocks)` メソッド、`stylize_block_for_target(n)` ヘルパ |
+| [app/api_client.py](../app/api_client.py) | `generate_concept_image` プロンプトに「幅 W × 奥行 D × 高さ約 H ブロック / 合計 N ブロック四方」を明記 |
+| [app/pages_v2/building.py](../app/pages_v2/building.py) | `_section_blueprint()` で `tripo_cfg.with_building_override(max(width, depth))` を適用し、`PipelineStatus` に「自動サイズ設定: ...」行をログ出力 |
+| [app/pages_v2/settings.py](../app/pages_v2/settings.py) | 上級者モードトグル `bnn_tripo_advanced` で voxel/block_size/seed expander を条件分岐。`auto_size_from_zone` チェックは上級者モード内の Voxel 解像度 expander にある |
+
+**target_blocks → 各パラメータの対応**（[`tripo_config.stylize_block_for_target`](../app/v2/tripo_config.py)）:
+
+| target_blocks（ゾーン最長辺） | voxel_lower / voxel_upper | style_block_size |
+|---|---|---|
+| 8（小屋） | 8 | 160（粗・小型） |
+| 16 | 16 | 160 |
+| 32（標準） | 32 | 80（現行デフォルト） |
+| 48 | 48 | 53 |
+| 64 | 64 | 40 |
+| 96（大型） | 96 | 27 |
+
+**互換性**:
+
+- 既存プロジェクトを開いても `auto_size_from_zone=True` がデフォルトなので即座に新挙動になる（→ これまで Settings で voxel=6/48 にしていた人は、ゾーンサイズに応じた解像度に**変わる**）
+- 旧挙動が欲しい場合は上級者モード → Voxel 解像度 expander の「ゾーン最長辺から自動上書きする」を **OFF** にする
+- Concept 画像プロンプトは既存の `幅 W × 奥行 D ブロック` 行に「高さ約 H ブロック / 合計 N ブロック四方」を追記しただけなので、再生成しても建物の方向性は変わらない
+
 ---
 
 ## 改訂時のチェックリスト

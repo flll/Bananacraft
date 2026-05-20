@@ -5,6 +5,7 @@ Settings ページで編集された値を `~/.config/bananacraft/tripo_config.j
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from dataclasses import asdict, dataclass, field, fields
@@ -57,6 +58,7 @@ TRIPO_WIDGET_FIELD_MAP: Dict[str, str] = {
     "bnn_tripo_mseed": "model_seed",
     "bnn_tripo_tseed": "texture_seed",
     "bnn_tripo_autofix": "enable_image_autofix",
+    "bnn_tripo_auto_size_from_zone": "auto_size_from_zone",
 }
 
 TRIPO_RESET_BUTTON_KEY = "bnn_tripo_reset"
@@ -113,7 +115,36 @@ class TripoConfig:
     voxel_lower_bound: int = 6
     voxel_upper_bound: int = 48
 
+    # --- ゾーンサイズからの自動上書き ---------------------------------------
+    # True (デフォルト) のとき、Building Blueprint 作成時に zone の
+    # `max(width, depth)` を target_blocks として `with_building_override()` で
+    # voxel_lower=upper, style_block_size を上書きする。
+    # 上級者モードで明示的に OFF にすると、Settings の voxel/block_size が
+    # そのまま使われる（旧挙動）。
+    auto_size_from_zone: bool = True
+
     # ------------------------------------------------------------------
+
+    def with_building_override(self, target_blocks: int) -> "TripoConfig":
+        """zone の最長辺ブロック数から派生した TripoConfig を返す。
+
+        - GLB 経路: voxel_lower_bound = voxel_upper_bound = target_blocks
+          （`MeshArchitect` の ``target_voxel = max(lo, min(hi, max(w,d)))`` が
+          そのまま target_blocks に確定する）
+        - schem 経路: style_block_size = stylize_block_for_target(target_blocks)
+          （Tripo の block_size は粒度なので逆比例で算出）
+
+        ``self.auto_size_from_zone`` が False なら上書きせずそのまま返す。
+        """
+        if not self.auto_size_from_zone:
+            return self
+        n = max(4, min(96, int(target_blocks)))
+        return dataclasses.replace(
+            self,
+            voxel_lower_bound=n,
+            voxel_upper_bound=n,
+            style_block_size=stylize_block_for_target(n),
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -232,13 +263,37 @@ class TripoConfig:
                                  "voxel_lower_bound", "voxel_upper_bound"):
                 data[field_name] = int(raw)
             elif field_name in ("quad", "auto_size", "texture", "pbr", "use_texture_model",
-                                "texture_bake", "enable_image_autofix"):
+                                "texture_bake", "enable_image_autofix",
+                                "auto_size_from_zone"):
                 data[field_name] = bool(raw)
             else:
                 data[field_name] = raw
         base = cls.defaults()
         merged = {**base.to_dict(), **data}
         return cls.from_dict(merged)
+
+
+# ---- サイズ自動算出ヘルパ ---------------------------------------------
+
+
+def stylize_block_for_target(target_blocks: int) -> int:
+    """target_blocks (最長辺ブロック数) → Tripo stylize_model の ``block_size``.
+
+    Tripo の ``block_size`` はピクセル単位の「1 ブロック相当の大きさ」で、
+    値が小さいほどメッシュ細部が出る（=最終ブロック数が増える）。
+    建物の最長辺 N と block_size を逆比例させ、デフォルトの
+    ``block_size=80`` を ``target_blocks=32`` のときに復元する近似マップ:
+
+        target_blocks=8   → block_size=160 (粗・極小)
+        target_blocks=16  → block_size=160 (粗)
+        target_blocks=32  → block_size=80  (現行デフォルト)
+        target_blocks=48  → block_size=53
+        target_blocks=64  → block_size=40
+        target_blocks=96  → block_size=27  → clamp 24
+    """
+    n = max(4, int(target_blocks))
+    raw = round(80 * 32 / n)
+    return int(max(24, min(160, raw)))
 
 
 # ---- 永続化 -----------------------------------------------------------

@@ -115,13 +115,18 @@ class GeminiClient:
     def generate_concept_image(
         self, base_description: str, width: int, depth: int, concept_image_bytes: bytes = None
     ):
+        height_hint = max(6, round(max(int(width), int(depth)) * 0.7))
+        longest = max(int(width), int(depth))
         prompt = (
             f"マインクラフト（Minecraft）のボクセル建築物の画像を生成してください。\n"
             f"\n"
             f"【建築物の説明】\n"
             f"{base_description}\n"
             f"\n"
-            f"【建築サイズ】幅 {width} ブロック × 奥行 {depth} ブロック\n"
+            f"【建築サイズ】幅 {width} × 奥行 {depth} × 高さ約 {height_hint} ブロック"
+            f"（合計でおよそ {longest} ブロック四方の規模）\n"
+            f"- 1 ブロック = Minecraft の 1 立方体としてカウント可能なスケールで描いてください\n"
+            f"- 過度に細かいピクセルアートにせず、各ブロックの輪郭がはっきり見える解像感に揃えてください\n"
             f"\n"
             f"【視点・構図】※3Dモデル化のため非常に重要\n"
             f"- 斜め上45度からのアイソメトリック視点（Isometric view）\n"

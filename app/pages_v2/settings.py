@@ -134,13 +134,30 @@ def _section_tripo() -> None:
         "Bananacraft では、その GLB を**ボクセル化 → Minecraft ブロックに割当**してから RCON で建てます。"
     )
     st.markdown(
-        "**ここで触る項目はこの流れ全体（Tripo の生成パラメータ＋内部のボクセル化の細かさ）を制御します。**"
-        " 大抵はデフォルトのままで OK。出来高が「思ったより細い／太い」「色が違う」「形が崩れる」ときに該当セクションだけ触ります。"
+        "**建物ごとのサイズは City Plan のゾーン `width × depth` から自動で決まります。**"
+        " ここでは Tripo3D のスタイル・テクスチャなどの全体パラメータだけを調整します。"
+        " 解像度を細かく上書きしたいときは下の **⚙️ 上級者モード** を開いてください。"
     )
     st.caption(
         "💾 保存先: `~/.config/bananacraft/tripo_config.json`（プロジェクトを跨いで永続化）。"
-        "「デフォルトに戻す」で初期値（style=minecraft / voxel_lower_bound=6 / voxel_upper_bound=48）に復帰します。"
+        "「デフォルトに戻す」で初期値に復帰します。"
     )
+
+    advanced = st.toggle(
+        "⚙️ 上級者モード（Tripo の細かい調整）",
+        key="bnn_tripo_advanced",
+        help=(
+            "建物の規模は City Plan のゾーン width × depth から自動で決まります。"
+            " ここでチェックすると、voxel 解像度 / stylize block_size / seed などの"
+            " 手動上書き UI が表示されます。"
+        ),
+    )
+
+    if not advanced:
+        st.caption(
+            "💡 建物ごとの規模はゾーンサイズから自動算出されます。"
+            "解像度を細かく調整したいときだけ上級者モードを開いてください。"
+        )
 
     style_widget_val = str(st.session_state.get("bnn_tripo_style", TripoConfig.style_to_widget(cfg.style)))
     style_options = list(STYLE_CHOICES)
@@ -200,19 +217,26 @@ def _section_tripo() -> None:
             st.session_state.get("bnn_tripo_style")
         )
         if active_style:
-            st.slider(
-                f"style_block_size（{active_style} の粒度）",
-                min_value=20,
-                max_value=160,
-                step=10,
-                key="bnn_tripo_style_bs",
+            if advanced:
+                st.slider(
+                    f"style_block_size（{active_style} の粒度）",
+                    min_value=20,
+                    max_value=160,
+                    step=10,
+                    key="bnn_tripo_style_bs",
                     help=(
                         "stylize_model に渡す block_size。\n"
                         "小さいほど 1 ブロックが細かく、ブロック数が増える。\n"
                         "大きいほど粗いがシルエットがハッキリする。\n"
-                        "デフォルト 80。Minecraft スケールで 1:1 を狙うなら 40〜60 がおすすめ。"
+                        "通常はゾーンサイズから自動算出されます。"
+                        " 手動で固定したいときに上級者モードでここを触ってください。"
                     ),
-            )
+                )
+            else:
+                st.caption(
+                    f"🤖 `style_block_size` はゾーン最長辺から自動算出されます。"
+                    f" 現在の保存値: {int(st.session_state.get('bnn_tripo_style_bs', cfg.style_block_size))}（fallback）"
+                )
 
     # --- Geometry --------------------------------------------------------
     with st.expander("📐 Geometry（ジオメトリ）— メッシュの形状の細かさ", expanded=False):
@@ -381,12 +405,15 @@ def _section_tripo() -> None:
         else:
             st.caption("チェックすると詳細設定が表示されます。")
 
-    # --- Voxel resolution -----------------------------------------------
-    with st.expander("🧱 Voxel 解像度（ブロック化の細かさ）— 一番重要！", expanded=True):
+    # --- Voxel resolution (advanced only) -------------------------------
+    if advanced:
+      with st.expander("🧱 Voxel 解像度（手動上書き）", expanded=False):
         st.info(
             "**何のための設定？**\n\n"
             "Tripo3D が出した滑らかなメッシュを**何ブロック四方の解像度でボクセル化するか**を決めます。"
             "**1 voxel = 1 Minecraft ブロック** なので、これが直接「建物のブロック数」になります。\n\n"
+            "通常はゾーン `max(width, depth)` から自動算出されます（下のチェックボックスで OFF にできます）。"
+            "**ここで触った値は、自動上書きを OFF にした場合の fallback** になります。\n\n"
             "計算式: `target_voxel = max(lower, min(upper, max(width, depth)))`\n"
             "（建物の縦／横の長い方を、lower〜upper の範囲にクランプ）\n\n"
             "**目安（表面ブロック数 ≒ 6 × target_voxel²）**:\n"
@@ -394,13 +421,21 @@ def _section_tripo() -> None:
             "- 🟦 `lo=4, hi=5` → **~150 blocks**（**Pixel Art**: 1 マス = 1 ブロック、推奨）\n"
             "- 🟢 `lo=6, hi=12` → **~600 blocks**（小屋スケール）\n"
             "- 🟡 `lo=12, hi=24` → **~3000 blocks**（中スケール、立体感あり）\n"
-            "- 🔴 `lo=24, hi=48` → **~14000 blocks**（大型・高精細）\n\n"
-            "**いつ触る？**\n"
-            "- 🟦 出来高が**ブロック数 1 万超えで重い／本家っぽくない** → `voxel_lower_bound` / `voxel_upper_bound` を**下げる**\n"
-            "- 🟪 出来高が**カクカクすぎて細部が消える** → 両方の bound を**上げる**\n\n"
-            "💡 **究極の Pixel Art**: `lo=4, hi=5`（~150 blocks）。**さらに極端に少なく**したい場合のみ `lo=1`（`hi` も 1〜2）。",
+            "- 🔴 `lo=24, hi=48` → **~14000 blocks**（大型・高精細）",
             icon="🧱",
         )
+
+        st.checkbox(
+            "ゾーン最長辺から自動上書きする（推奨）",
+            key="bnn_tripo_auto_size_from_zone",
+            help=(
+                "ON のとき、Building Blueprint 作成時に zone の "
+                "`max(width, depth)` をそのまま target_blocks として "
+                "voxel_lower=voxel_upper, style_block_size を上書きします。\n\n"
+                "OFF にすると、ここで設定した lo/hi/block_size がそのまま使われます（旧挙動）。"
+            ),
+        )
+
         c1, c2 = st.columns(2)
         with c1:
             st.slider(
@@ -458,8 +493,9 @@ def _section_tripo() -> None:
             + "\n".join(preview_lines)
         )
 
-    # --- Seed ------------------------------------------------------------
-    with st.expander("🎲 Seed と補助（再現性・前処理）— 同じ結果を再現したい時用", expanded=False):
+    # --- Seed (advanced only) -------------------------------------------
+    if advanced:
+      with st.expander("🎲 Seed と補助（再現性・前処理）— 同じ結果を再現したい時用", expanded=False):
         st.info(
             "**何のための設定？**\n\n"
             "Tripo3D は同じ画像でも実行のたびに微妙に違う 3D を返します。"
@@ -526,7 +562,7 @@ def _section_tripo() -> None:
             confirm_title="Tripo 設定をデフォルトに戻しますか？",
             confirm_body=(
                 "保存済みの `tripo_config.json` を削除し、初期値"
-                "（style=minecraft, voxel_lower_bound=6, voxel_upper_bound=48 など）"
+                "（style=minecraft, auto_size_from_zone=ON など）"
                 "にリセットします。"
             ),
             confirm_label="リセットする",
@@ -695,8 +731,9 @@ def render() -> None:
                         "4 つのプロバイダー（Gemini / OpenAI / Anthropic / Tripo3D）"
                         "を一括設定。ブラウザ保存で次回も即使えます。"),
             FeatureCard("🧊", "Tripo3D をチューニング",
-                        "style=voxel やボクセル解像度を調整して、画像の "
-                        "1 ブロック ≒ Minecraft の 1 ブロックに揃えます。",
+                        "建物ごとの解像度はゾーンサイズから自動算出。"
+                        "ここではスタイル・テクスチャなど全体パラメータと、"
+                        "上級者モードでの手動上書きが行えます。",
                         meta="`~/.config/bananacraft/tripo_config.json` に永続化"),
             FeatureCard("🌍", "建設地点を指定",
                         "Minecraft サーバー上のどこに建てるかを X/Y/Z で指定。"
