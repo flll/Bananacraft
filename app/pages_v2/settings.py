@@ -16,9 +16,11 @@ from v2.tripo_config import (
     STYLE_CHOICES,
     TEXTURE_ALIGNMENT_CHOICES,
     TEXTURE_MODEL_VERSION_CHOICES,
+    TRIPO_RESET_BUTTON_KEY,
     TripoConfig,
     reset_tripo_config,
     save_tripo_config,
+    tripo_reset_confirmed,
 )
 
 from ui import state as S
@@ -113,7 +115,18 @@ def _section_world_origin() -> None:
 
 
 def _section_tripo() -> None:
+    # --- Phase 0: リセット (widget 描画より前) ----------------------------
+    if tripo_reset_confirmed(st.session_state):
+        defaults = reset_tripo_config()
+        st.session_state.tripo_config = defaults
+        defaults.apply_widget_state(st.session_state)
+        st.toast("Tripo 設定をリセットしました。", icon="🔄")
+        st.rerun()
+
     cfg: TripoConfig = st.session_state.tripo_config
+
+    # --- Phase 1: 欠落 widget key の seed ---------------------------------
+    cfg.ensure_widget_keys(st.session_state)
 
     st.subheader("🧊 Tripo3D 設定")
     st.markdown(
@@ -126,13 +139,15 @@ def _section_tripo() -> None:
     )
     st.caption(
         "💾 保存先: `~/.config/bananacraft/tripo_config.json`（プロジェクトを跨いで永続化）。"
-        "「デフォルトに戻す」で推奨値（style=voxel / voxel_lower_bound=12）に即復帰できます。"
+        "「デフォルトに戻す」で初期値（style=minecraft / voxel_lower_bound=6 / voxel_upper_bound=48）に復帰します。"
     )
 
-    style_default = cfg.style if cfg.style is not None else "None"
-    if style_default not in STYLE_CHOICES:
-        STYLE_CHOICES.insert(0, style_default)
+    style_widget_val = str(st.session_state.get("bnn_tripo_style", TripoConfig.style_to_widget(cfg.style)))
+    style_options = list(STYLE_CHOICES)
+    if style_widget_val not in style_options:
+        style_options = [style_widget_val] + style_options
 
+    # --- Phase 2: widget 描画 --------------------------------------------
     # --- Model -----------------------------------------------------------
     with st.expander("🧠 Model（モデル）— Tripo3D 本体のバージョンと後処理スタイル", expanded=True):
         st.info(
@@ -147,15 +162,9 @@ def _section_tripo() -> None:
         )
         c1, c2 = st.columns(2)
         with c1:
-            mv_idx = (
-                MODEL_VERSION_CHOICES.index(cfg.model_version)
-                if cfg.model_version in MODEL_VERSION_CHOICES
-                else 0
-            )
-            cfg.model_version = st.selectbox(
+            st.selectbox(
                 "model_version（Tripo3D モデルのバージョン）",
                 options=MODEL_VERSION_CHOICES,
-                index=mv_idx,
                 key="bnn_tripo_mv",
                 help=(
                     "Tripo3D の **image_to_model**（画像→3D メッシュ）AI モデルのバージョン。\n"
@@ -169,11 +178,9 @@ def _section_tripo() -> None:
                 "テクスチャ専用の `v3.0-20250812` を使いたい場合は、下の **🖌️ Texture Model** セクションへ。"
             )
         with c2:
-            st_idx = STYLE_CHOICES.index(style_default)
-            chosen_style = st.selectbox(
+            st.selectbox(
                 "style（後処理スタイル / stylize_model）",
-                options=STYLE_CHOICES,
-                index=st_idx,
+                options=style_options,
                 key="bnn_tripo_style",
                 help=(
                     "image_to_model 完了後に **stylize_model タスク** で適用する後処理スタイル。\n\n"
@@ -184,28 +191,27 @@ def _section_tripo() -> None:
                     "・voronoi: ボロノイ分割風（装飾的）"
                 ),
             )
-            cfg.style = None if chosen_style == "None" else chosen_style
             st.caption(
                 "🧱 **`minecraft` 推奨**: Tripo がメッシュを Minecraft ブロックの単位に揃えてから返してくれるので、"
                 "そのあとのボクセル化＋色マッチが最も自然に決まります。"
             )
 
-        if cfg.style:
-            cfg.style_block_size = int(
-                st.slider(
-                    f"style_block_size（{cfg.style} の粒度）",
-                    min_value=20,
-                    max_value=160,
-                    value=int(cfg.style_block_size),
-                    step=10,
-                    key="bnn_tripo_style_bs",
+        active_style = TripoConfig.style_from_widget(
+            st.session_state.get("bnn_tripo_style")
+        )
+        if active_style:
+            st.slider(
+                f"style_block_size（{active_style} の粒度）",
+                min_value=20,
+                max_value=160,
+                step=10,
+                key="bnn_tripo_style_bs",
                     help=(
                         "stylize_model に渡す block_size。\n"
                         "小さいほど 1 ブロックが細かく、ブロック数が増える。\n"
                         "大きいほど粗いがシルエットがハッキリする。\n"
                         "デフォルト 80。Minecraft スケールで 1:1 を狙うなら 40〜60 がおすすめ。"
                     ),
-                )
             )
 
     # --- Geometry --------------------------------------------------------
@@ -221,15 +227,9 @@ def _section_tripo() -> None:
         )
         c1, c2, c3 = st.columns(3)
         with c1:
-            gq_idx = (
-                QUALITY_CHOICES.index(cfg.geometry_quality)
-                if cfg.geometry_quality in QUALITY_CHOICES
-                else 0
-            )
-            cfg.geometry_quality = st.selectbox(
+            st.selectbox(
                 "geometry_quality（形状の精密さ）",
                 options=QUALITY_CHOICES,
-                index=gq_idx,
                 key="bnn_tripo_gq",
                 help=(
                     "・standard: バランス重視（推奨）\n"
@@ -237,34 +237,29 @@ def _section_tripo() -> None:
                 ),
             )
         with c2:
-            cfg.face_limit = int(
-                st.slider(
-                    "face_limit（最大ポリゴン数）",
-                    min_value=1000,
-                    max_value=100000,
-                    value=int(cfg.face_limit),
-                    step=1000,
-                    key="bnn_tripo_face",
+            st.slider(
+                "face_limit（最大ポリゴン数）",
+                min_value=1000,
+                max_value=100000,
+                step=1000,
+                key="bnn_tripo_face",
                     help=(
                         "メッシュを構成する三角形の上限。\n"
                         "多いほど細部が出るが、ボクセル化の処理時間も増える。\n"
                         "30000 が建物用途の標準値。"
-                    ),
-                )
+                ),
             )
         with c3:
-            cfg.quad = st.checkbox(
+            st.checkbox(
                 "quad（四角ポリゴン）",
-                value=bool(cfg.quad),
                 key="bnn_tripo_quad",
                 help=(
                     "出力メッシュを三角形ではなく四角形ベースにする。\n"
                     "ブラウザでの GLB プレビューが綺麗になるが、Minecraft 化には影響しないので **OFF 推奨**。"
                 ),
             )
-            cfg.auto_size = st.checkbox(
+            st.checkbox(
                 "auto_size（自動サイズ補正）",
-                value=bool(cfg.auto_size),
                 key="bnn_tripo_autosize",
                 help=(
                     "Tripo 側でメッシュの寸法を自動補正する。\n"
@@ -286,15 +281,9 @@ def _section_tripo() -> None:
         )
         c1, c2, c3 = st.columns(3)
         with c1:
-            tq_idx = (
-                QUALITY_CHOICES.index(cfg.texture_quality)
-                if cfg.texture_quality in QUALITY_CHOICES
-                else 1
-            )
-            cfg.texture_quality = st.selectbox(
+            st.selectbox(
                 "texture_quality（テクスチャ精度）",
                 options=QUALITY_CHOICES,
-                index=tq_idx,
                 key="bnn_tripo_tq",
                 help=(
                     "・standard: 速いが色がぼやけがち\n"
@@ -302,15 +291,9 @@ def _section_tripo() -> None:
                 ),
             )
         with c2:
-            ta_idx = (
-                TEXTURE_ALIGNMENT_CHOICES.index(cfg.texture_alignment)
-                if cfg.texture_alignment in TEXTURE_ALIGNMENT_CHOICES
-                else 0
-            )
-            cfg.texture_alignment = st.selectbox(
+            st.selectbox(
                 "texture_alignment（色の貼り方）",
                 options=TEXTURE_ALIGNMENT_CHOICES,
-                index=ta_idx,
                 key="bnn_tripo_ta",
                 help=(
                     "テクスチャをメッシュに貼る基準。\n\n"
@@ -319,18 +302,16 @@ def _section_tripo() -> None:
                 ),
             )
         with c3:
-            cfg.texture = st.checkbox(
+            st.checkbox(
                 "texture（テクスチャを生成）",
-                value=bool(cfg.texture),
                 key="bnn_tripo_tex",
                 help=(
                     "OFFにすると Tripo は色情報のないグレーメッシュを返す。\n"
                     "色ではなく形だけ欲しい用途（テスト用）以外は **ON 推奨**。"
                 ),
             )
-            cfg.pbr = st.checkbox(
+            st.checkbox(
                 "pbr（物理ベース）",
-                value=bool(cfg.pbr),
                 key="bnn_tripo_pbr",
                 help=(
                     "金属感／粗さなどの PBR マテリアルを出力。\n"
@@ -358,9 +339,8 @@ def _section_tripo() -> None:
             icon="🖌️",
         )
 
-        cfg.use_texture_model = st.checkbox(
+        st.checkbox(
             "Texture Model を使う（後段でテクスチャを再生成）",
-            value=bool(cfg.use_texture_model),
             key="bnn_tripo_use_tex_model",
             help=(
                 "ONにすると image_to_model 完了後に texture_model タスクを追加で実行。\n"
@@ -368,18 +348,16 @@ def _section_tripo() -> None:
             ),
         )
 
-        if cfg.use_texture_model:
+        if st.session_state.get("bnn_tripo_use_tex_model"):
             c1, c2 = st.columns(2)
             with c1:
-                tmv_default = (
-                    cfg.texture_model_version
-                    if cfg.texture_model_version in TEXTURE_MODEL_VERSION_CHOICES
-                    else TEXTURE_MODEL_VERSION_CHOICES[0]
-                )
-                cfg.texture_model_version = st.selectbox(
+                tex_mv_options = list(TEXTURE_MODEL_VERSION_CHOICES)
+                tmv_val = str(st.session_state.get("bnn_tripo_tex_mv", cfg.texture_model_version))
+                if tmv_val not in tex_mv_options:
+                    tex_mv_options = [tmv_val] + tex_mv_options
+                st.selectbox(
                     "texture_model_version",
-                    options=TEXTURE_MODEL_VERSION_CHOICES,
-                    index=TEXTURE_MODEL_VERSION_CHOICES.index(tmv_default),
+                    options=tex_mv_options,
                     key="bnn_tripo_tex_mv",
                     help=(
                         "・v3.0-20250812: 最新・最高品質（推奨）\n"
@@ -388,9 +366,8 @@ def _section_tripo() -> None:
                 )
                 st.caption("📚 [API ドキュメント](https://docs.tripo3d.ai/texture/texture-model-v3-0-20250812.html)")
             with c2:
-                cfg.texture_bake = st.checkbox(
+                st.checkbox(
                     "bake（テクスチャ焼き付け）",
-                    value=bool(cfg.texture_bake),
                     key="bnn_tripo_tex_bake",
                     help=(
                         "ONで PBR マテリアル効果をベーステクスチャに焼き込む。\n"
@@ -413,6 +390,7 @@ def _section_tripo() -> None:
             "計算式: `target_voxel = max(lower, min(upper, max(width, depth)))`\n"
             "（建物の縦／横の長い方を、lower〜upper の範囲にクランプ）\n\n"
             "**目安（表面ブロック数 ≒ 6 × target_voxel²）**:\n"
+            "- ⬛ `lo=1, hi=1` → **~6 blocks**（極小・シルエットのみ。細部はほぼ消える）\n"
             "- 🟦 `lo=4, hi=5` → **~150 blocks**（**Pixel Art**: 1 マス = 1 ブロック、推奨）\n"
             "- 🟢 `lo=6, hi=12` → **~600 blocks**（小屋スケール）\n"
             "- 🟡 `lo=12, hi=24` → **~3000 blocks**（中スケール、立体感あり）\n"
@@ -420,60 +398,59 @@ def _section_tripo() -> None:
             "**いつ触る？**\n"
             "- 🟦 出来高が**ブロック数 1 万超えで重い／本家っぽくない** → `voxel_lower_bound` / `voxel_upper_bound` を**下げる**\n"
             "- 🟪 出来高が**カクカクすぎて細部が消える** → 両方の bound を**上げる**\n\n"
-            "💡 **「ドット絵 1 マス = ブロック 1 個」を狙うなら lo=4, hi=5 が究極の Pixel Art スケール**\n"
-            "（どんな footprint でも target_voxel が 4〜5 にロック → 5×5 ブロックの壁が 1 quad 1 ブロックに対応）。",
+            "💡 **究極の Pixel Art**: `lo=4, hi=5`（~150 blocks）。**さらに極端に少なく**したい場合のみ `lo=1`（`hi` も 1〜2）。",
             icon="🧱",
         )
         c1, c2 = st.columns(2)
         with c1:
-            cfg.voxel_lower_bound = int(
-                st.slider(
-                    "voxel_lower_bound（最小解像度）",
-                    min_value=4,
-                    max_value=32,
-                    value=int(cfg.voxel_lower_bound),
-                    key="bnn_tripo_vlo",
-                    help=(
-                        "区画が小さくても保証されるボクセル数の下限。\n"
-                        "小さくするほど concept art の 1 ブロックが Minecraft の 1 ブロックに近づく。\n\n"
-                        "目安:\n"
-                        "・4-6: ドット絵スケール (~100-200 blocks)\n"
-                        "・8-12: 中スケール (~400-800 blocks)\n"
-                        "・16-24: 大型・高精細 (~1500-3500 blocks)\n"
-                        "推奨: 6"
-                    ),
-                )
+            st.slider(
+                "voxel_lower_bound（最小解像度）",
+                min_value=1,
+                max_value=32,
+                key="bnn_tripo_vlo",
+                help=(
+                    "区画が小さくても保証されるボクセル数の下限（1〜32）。\n"
+                    "小さくするほど concept art の 1 ブロックが Minecraft の 1 ブロックに近づく。\n\n"
+                    "目安:\n"
+                    "・1-2: 極小シルエット (~6-24 blocks、細部ほぼなし)\n"
+                    "・4-6: ドット絵スケール (~100-200 blocks)\n"
+                    "・8-12: 中スケール (~400-800 blocks)\n"
+                    "推奨: 6（Pixel Art なら lo=4）"
+                ),
             )
             st.caption("⬇ ブロック数が多すぎ／本家っぽくないなら下げる")
         with c2:
-            cfg.voxel_upper_bound = int(
-                st.slider(
-                    "voxel_upper_bound（最大解像度）",
-                    min_value=4,
-                    max_value=128,
-                    value=int(cfg.voxel_upper_bound),
-                    key="bnn_tripo_vhi",
-                    help=(
-                        "大規模区画でもブロック数が無限大にならないよう抑える上限。\n"
-                        "高くするほど大型建築のディテールが残る。\n\n"
-                        "**Pixel Art を狙うなら lo=4, hi=5** で固定すると、"
-                        "footprint に関係なく target_voxel が 4〜5 に縛られる。\n"
-                        "推奨: 48 (通常) / 5 (Pixel Art)"
-                    ),
-                )
+            st.slider(
+                "voxel_upper_bound（最大解像度）",
+                min_value=1,
+                max_value=128,
+                key="bnn_tripo_vhi",
+                help=(
+                    "大規模区画でもブロック数が無限大にならないよう抑える上限（1〜128）。\n"
+                    "高くするほど大型建築のディテールが残る。\n\n"
+                    "**Pixel Art**: lo=4, hi=5。**極小**: lo=1, hi=1〜2。\n"
+                    "推奨: 48 (通常) / 5 (Pixel Art)"
+                ),
             )
             st.caption("⬆ 大型建築の細部が欲しいなら上げる ⬇ Pixel Art なら 5 程度")
-        if cfg.voxel_lower_bound > cfg.voxel_upper_bound:
+        vlo = int(st.session_state.get("bnn_tripo_vlo", cfg.voxel_lower_bound))
+        vhi = int(st.session_state.get("bnn_tripo_vhi", cfg.voxel_upper_bound))
+        if vlo > vhi:
             st.warning(
                 "voxel_lower_bound > voxel_upper_bound です。クランプ時に上限が優先されます。",
                 icon="⚠️",
             )
 
         # 簡易プレビュー: 現在の設定での予測ブロック数
-        sample_footprints = [(5, "5×5 小屋"), (10, "10×10 区画"), (20, "20×20 大型")]
+        sample_footprints = [
+            (1, "1×1 極小"),
+            (5, "5×5 小屋"),
+            (10, "10×10 区画"),
+            (20, "20×20 大型"),
+        ]
         preview_lines: list[str] = []
         for fp, label in sample_footprints:
-            est = max(cfg.voxel_lower_bound, min(cfg.voxel_upper_bound, fp))
+            est = max(vlo, min(vhi, fp))
             est_blocks = int(6 * est * est)
             preview_lines.append(f"- {label}: target_voxel={est} → ~{est_blocks} blocks")
         st.caption(
@@ -495,35 +472,28 @@ def _section_tripo() -> None:
         )
         c1, c2, c3 = st.columns(3)
         with c1:
-            cfg.model_seed = int(
-                st.number_input(
-                    "model_seed（形状の乱数）",
-                    value=int(cfg.model_seed),
-                    step=1,
-                    key="bnn_tripo_mseed",
+            st.number_input(
+                "model_seed（形状の乱数）",
+                step=1,
+                key="bnn_tripo_mseed",
                     help=(
                         "メッシュ形状の生成シード。\n"
                         "同じ値 → 同じ形が再現される。値を変えると別パターンの 3D を引き直せる。"
-                    ),
-                )
+                ),
             )
         with c2:
-            cfg.texture_seed = int(
-                st.number_input(
-                    "texture_seed（テクスチャの乱数）",
-                    value=int(cfg.texture_seed),
-                    step=1,
-                    key="bnn_tripo_tseed",
+            st.number_input(
+                "texture_seed（テクスチャの乱数）",
+                step=1,
+                key="bnn_tripo_tseed",
                     help=(
                         "テクスチャ生成側のシード。\n"
                         "形状はそのままに、色の塗り直しだけしたい時に変える。"
-                    ),
-                )
+                ),
             )
         with c3:
-            cfg.enable_image_autofix = st.checkbox(
+            st.checkbox(
                 "enable_image_autofix（画像の自動補正）",
-                value=bool(cfg.enable_image_autofix),
                 key="bnn_tripo_autofix",
                 help=(
                     "Tripo 側で入力画像を自動補正（背景除去、明るさ調整など）してから 3D 化する。\n"
@@ -532,6 +502,8 @@ def _section_tripo() -> None:
                 ),
             )
 
+    # --- Phase 3: widget → tripo_config 同期 --------------------------------
+    cfg = TripoConfig.from_widget_state(st.session_state)
     st.session_state.tripo_config = cfg
 
     c_save, c_reset = st.columns(2)
@@ -548,23 +520,18 @@ def _section_tripo() -> None:
             except OSError as e:
                 st.error(f"保存に失敗: {e}")
     with c_reset:
-        if danger_button(
+        danger_button(
             "🔄 デフォルトに戻す",
-            key="bnn_tripo_reset",
+            key=TRIPO_RESET_BUTTON_KEY,
             confirm_title="Tripo 設定をデフォルトに戻しますか？",
             confirm_body=(
-                "保存済みの `tripo_config.json` を削除し、推奨デフォルト値"
-                "（style=voxel, voxel_lower_bound=12 など）にリセットします。"
+                "保存済みの `tripo_config.json` を削除し、初期値"
+                "（style=minecraft, voxel_lower_bound=6, voxel_upper_bound=48 など）"
+                "にリセットします。"
             ),
             confirm_label="リセットする",
             use_container_width=True,
-        ):
-            st.session_state.tripo_config = reset_tripo_config()
-            for k in list(st.session_state.keys()):
-                if isinstance(k, str) and k.startswith("bnn_tripo_"):
-                    st.session_state.pop(k, None)
-            st.toast("Tripo 設定をリセットしました。", icon="🔄")
-            st.rerun()
+        )
 
 
 def _section_minecraft_assets() -> None:

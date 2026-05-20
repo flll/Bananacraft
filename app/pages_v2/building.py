@@ -19,6 +19,7 @@ from v2 import mc_assets_runtime as _mc_runtime
 from v2.mesh_architect import MeshArchitect
 from v2.palette_inference import infer_palette
 from v2.preview import create_3d_preview
+from v2.schem_deploy import SchemDeployError, deploy_schem, paste_via_rcon
 from v2.texture_atlas import get_or_build_atlas_png
 from v2.voxel_glb_builder import build_voxel_glb
 from voxelizer.block_assigner import BlockAtlas
@@ -97,6 +98,37 @@ def _render_voxel_preview(
     st.plotly_chart(fig, use_container_width=True)
 
 
+def _clear_blueprint_artifacts(fm, zone_id: int) -> None:
+    """ブループリント関連の中間ファイルをまとめて削除する。
+
+    schem-only 経路と GLB ボクセル経路のどちらでも同じファイル群を扱うので、
+    UI 側の「再生成」「リセット」ボタンから共通で呼ぶ。
+    """
+    mesh_glob = os.path.join(fm.project_dir, f"mesh_{zone_id}.*")
+    for pth in glob.glob(mesh_glob):
+        if os.path.isfile(pth):
+            try:
+                os.remove(pth)
+            except OSError:
+                pass
+    aux = (
+        f"building_{zone_id}_instructions.json",
+        f"building_{zone_id}_blocks_v2.json",
+        f"building_{zone_id}.schem",
+        f"building_{zone_id}_schem_meta.json",
+        f"tripo_task_{zone_id}.json",
+        f"tripo_stylize_task_{zone_id}.json",
+        f"tripo_texture_task_{zone_id}.json",
+    )
+    for fn in aux:
+        pth = fm.get_path(fn)
+        if os.path.isfile(pth):
+            try:
+                os.remove(pth)
+            except OSError:
+                pass
+
+
 def _force_persistent_leaves(blocks: List[Dict[str, Any]]) -> None:
     for b in blocks:
         t = b.get("type", "") if isinstance(b, dict) else ""
@@ -137,7 +169,9 @@ def _zone_design_state(fm, zone_id: int) -> str:
 
 
 def _zone_blueprint_state(fm, zone_id: int, design_done: bool) -> str:
-    if fm.exists(f"building_{zone_id}_blocks_v2.json"):
+    if fm.exists(f"building_{zone_id}_blocks_v2.json") or fm.exists(
+        f"building_{zone_id}.schem"
+    ):
         return "done"
     if not design_done:
         return "locked"
@@ -311,11 +345,12 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
     zone_id = zone["id"]
     inst_file = f"building_{zone_id}_instructions.json"
     blocks_file = f"building_{zone_id}_blocks_v2.json"
-    mesh_glob = os.path.join(fm.project_dir, f"mesh_{zone_id}.*")
+    schem_file = f"building_{zone_id}.schem"
 
     st.caption(
         "Structure 画像から 3D メッシュを生成（Tripo3D）→ ボクセル化 → Minecraft ブロック割当を行います。"
         " さらに Gemini で窓・ドア等のセマンティック要素を補完します。"
+        " Tripo が `.schem` を返した場合は WorldEdit 用にそのまま保存し、設置経路として優先します。"
     )
 
     if not design_done:
@@ -323,10 +358,61 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
         return False
 
     has_blocks = fm.exists(blocks_file)
+    has_schem = fm.exists(schem_file)
+
+    if has_schem and not has_blocks:
+        st.success(
+            "Tripo の `.schem` を取得済みです。WorldEdit + RCON でワールドに配置できます。",
+            icon="📦",
+        )
+        st.caption(
+            "プレビューはワールド内（`localhost:28888`）で確認します。"
+            " 別のシード／プロンプトで取り直したい、あるいは GLB ボクセル経路も生成したい場合は"
+            " 下のボタンから再生成してください。"
+        )
+
+        meta = fm.load_json(f"building_{zone_id}_schem_meta.json") or {}
+        if meta:
+            with st.expander("schem メタデータ", expanded=False):
+                st.json(meta, expanded=False)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if danger_button(
+                "🔄 Tripo を再取得（.schem 再生成）",
+                key=f"bnn_schem_regen_{zone_id}",
+                confirm_title="Tripo に再依頼しますか？",
+                confirm_body=(
+                    "既存の `.schem` / GLB キャッシュ / Tripo タスクメタを削除して、"
+                    " 同じ Structure 画像で Tripo3D に再依頼します（クレジット消費）。"
+                ),
+                confirm_label="再取得する",
+            ):
+                _clear_blueprint_artifacts(fm, zone_id)
+                st.toast("ブループリントをクリアしました。再生成画面に戻ります。", icon="🧹")
+                st.rerun()
+        with c2:
+            if danger_button(
+                "🗑️ リセット（成果物のみ削除）",
+                key=f"bnn_schem_reset_{zone_id}",
+                confirm_title="ブループリントをリセットしますか？",
+                confirm_body=(
+                    "Tripo には再依頼せず、`.schem` / `blocks_v2.json` / `instructions.json` / "
+                    "Tripo タスクメタを削除して未生成状態に戻します。"
+                    " このあと「ブループリントを作成」ボタンが再表示されます。"
+                ),
+                confirm_label="リセットする",
+            ):
+                _clear_blueprint_artifacts(fm, zone_id)
+                st.toast("ブループリントをリセットしました。", icon="🧹")
+                st.rerun()
+        return True
 
     if has_blocks:
         blocks = fm.load_json(blocks_file) or []
         st.success(f"ブループリント準備済み: **{len(blocks)}** blocks", icon="✅")
+        if has_schem:
+            st.caption("Tripo `.schem` も保存済み — Build セクションで WorldEdit 経路も選べます。")
 
         with st.expander("3D Preview", expanded=False):
             tab_vox, tab_glb = st.tabs(
@@ -356,19 +442,13 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
                 key=f"bnn_bp_regen_{zone_id}",
                 confirm_title="ブループリントを作り直しますか？",
                 confirm_body=(
-                    "既存の `building_*_blocks_v2.json` と `instructions.json`、"
-                    "および Tripo タスクのメタデータが削除されます。"
+                    "既存の `building_*_blocks_v2.json`、`instructions.json`、`.schem`、"
+                    "Tripo タスクメタを削除します。"
                     " GLB キャッシュは下のチェックボックスで指定したものに従います。"
                 ),
                 confirm_label="削除して再生成画面へ",
             ):
-                for pth in glob.glob(mesh_glob):
-                    if os.path.isfile(pth):
-                        os.remove(pth)
-                for fn in (inst_file, blocks_file, f"tripo_task_{zone_id}.json"):
-                    pth = fm.get_path(fn)
-                    if os.path.isfile(pth):
-                        os.remove(pth)
+                _clear_blueprint_artifacts(fm, zone_id)
                 st.toast("ブループリントをクリアしました。", icon="🧹")
                 st.rerun()
         return True
@@ -461,33 +541,52 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
                     palette=palette,
                     tripo_config=tripo_cfg,
                 )
-                blocks_out = result["blocks"]
-                inst_out = result["instructions"]
-                fm.save_json(blocks_file, blocks_out)
-                fm.save_json(inst_file, inst_out)
+                blocks_out = result.get("blocks") or []
+                inst_out = result.get("instructions") or []
+                schem_path = result.get("schem_path")
 
-                # ゾーン外形を結果に合わせて調整
-                try:
-                    from v2.layout_engine import LayoutEngine
-                except ImportError:
-                    from app.v2.layout_engine import LayoutEngine
+                # schem 経路で完了した場合は blocks_v2 / instructions を作らない。
+                # 後段 UI は schem ファイルだけ見て WorldEdit 配置できる。
+                if blocks_out:
+                    fm.save_json(blocks_file, blocks_out)
+                if inst_out:
+                    fm.save_json(inst_file, inst_out)
 
-                if S.has_zoning():
-                    current = (
-                        fm.load_json("zoning_adjusted.json")
-                        if fm.exists("zoning_adjusted.json")
-                        else fm.load_json("zoning_data.json")
+                if schem_path:
+                    p.write(
+                        f"Tripo .schem を保存: {os.path.basename(schem_path)}"
+                        "（WorldEdit + RCON で配置可能）"
                     )
-                    engine = LayoutEngine(current)
-                    updated = engine.update_zone_from_blocks(zone_id, blocks_out)
-                    if updated:
-                        engine.resolve_collisions(zone_id)
-                        new_zoning = engine.get_zones()
-                        fm.save_json("zoning_adjusted.json", new_zoning)
-                        st.session_state.zoning = new_zoning
-                        S.refresh_selected_from_zoning()
 
-                p.done(f"完了：{len(blocks_out)} blocks / {len(inst_out)} 命令")
+                # blocks がある場合のみゾーン外形を結果に合わせて調整する。
+                if blocks_out:
+                    try:
+                        from v2.layout_engine import LayoutEngine
+                    except ImportError:
+                        from app.v2.layout_engine import LayoutEngine
+
+                    if S.has_zoning():
+                        current = (
+                            fm.load_json("zoning_adjusted.json")
+                            if fm.exists("zoning_adjusted.json")
+                            else fm.load_json("zoning_data.json")
+                        )
+                        engine = LayoutEngine(current)
+                        updated = engine.update_zone_from_blocks(zone_id, blocks_out)
+                        if updated:
+                            engine.resolve_collisions(zone_id)
+                            new_zoning = engine.get_zones()
+                            fm.save_json("zoning_adjusted.json", new_zoning)
+                            st.session_state.zoning = new_zoning
+                            S.refresh_selected_from_zoning()
+
+                if schem_path and not blocks_out:
+                    p.done(
+                        f"schem 経路で完了：{os.path.basename(schem_path)} を保存"
+                        " — Build セクションから WorldEdit で配置できます"
+                    )
+                else:
+                    p.done(f"完了：{len(blocks_out)} blocks / {len(inst_out)} 命令")
             st.toast("ブループリントが完成しました！", icon="🏗️")
             st.rerun()
         except Exception as e:
@@ -499,23 +598,83 @@ def _section_build(zone: dict, blueprint_done: bool, log_key: str) -> bool:
     fm = st.session_state.file_manager
     zone_id = zone["id"]
     blocks_file = f"building_{zone_id}_blocks_v2.json"
+    schem_file = f"building_{zone_id}.schem"
     build_origin = _build_origin_for(zone)
     current_origin = S.project_origin()
 
     st.caption("RCON 経由でブロックを一括設置します。`Origin` は Settings ページで変更できます。")
 
+    # build_originの表記を空白区切りで表示
+    if isinstance(build_origin, (tuple, list)) and len(build_origin) == 3:
+        build_origin_str = f"{build_origin[0]} {build_origin[1]} {build_origin[2]}"
+    else:
+        build_origin_str = str(build_origin)
+
     st.markdown(
-        f"**設置先座標**: `{build_origin}` "
-        f"`(zoning offset = {zone['position']['x']}, {zone['position']['z']})`"
+        f"**設置先座標**: `({build_origin_str})` "
+        f"`(zoning offset = {zone['position']['x']} {zone['position']['z']})`"
     )
 
     if not blueprint_done:
         st.info("先にブループリントを作成してください。", icon="🔒")
         return False
 
+    has_schem = fm.exists(schem_file)
+    has_blocks = fm.exists(blocks_file)
+    schematic_name = f"building_{zone_id}"
+
+    if has_schem:
+        st.markdown(
+            "**Tripo `.schem` 経路（推奨）**: WorldEdit プラグインに schem をロードして `//paste` します。"
+            " 配置の結果はワールド内（`localhost:28888`）で確認してください。"
+        )
+        if primary_button(
+            "📦 WorldEdit で配置 (.schem)",
+            key=f"bnn_build_schem_{zone_id}",
+            use_container_width=True,
+        ):
+            try:
+                with st.spinner(f"WorldEdit で {schematic_name} を配置中..."):
+                    local_schem = fm.get_path(schem_file)
+                    dst = deploy_schem(local_schem, schematic_name)
+                    log = paste_via_rcon(schematic_name, build_origin)
+                st.session_state[log_key] = log
+
+                # WorldEdit のレスポンスに `§c` (赤色エラー) があれば検知して警告。
+                # `//world` 設定ミス・schem 未配置などをユーザーに分かりやすく伝える。
+                joined = " ".join(str(l) for l in (log or []))
+                if "§c" in joined or "Incorrect argument" in joined or "You need to provide a world" in joined:
+                    st.warning(
+                        "WorldEdit からエラーレスポンスが返っています。"
+                        " ワールド名が `world` でない、もしくは schem が schematics ディレクトリに配置されていない可能性があります。"
+                        " `.env` の `BANANACRAFT_MC_WORLD` を実際のワールド名に合わせるか、"
+                        " `make logs-mc` でサーバー側ログを確認してください。",
+                        icon="⚠️",
+                    )
+                else:
+                    st.toast(f"WorldEdit で配置しました: {dst.name}", icon="📦")
+                st.rerun()
+            except SchemDeployError as e:
+                st.error(f"Schem deploy failed: {e}")
+            except ConnectionError as e:
+                st.error(
+                    f"Minecraft サーバーに接続できません: {e}\n\n"
+                    "サーバーが起動していない可能性があります。リポジトリルートで `make up` を実行してから再試行してください。"
+                )
+            except Exception as e:
+                st.error(f"WorldEdit Paste Failed: {e}")
+
+    if has_blocks and has_schem:
+        st.caption("--- 従来の RCON ボクセル経路（フォールバック）---")
+    elif not has_blocks and not has_schem:
+        st.info("ブループリント成果物（blocks_v2 / schem）が見つかりません。")
+        return False
+
     c1, c2 = st.columns([2, 1])
     with c1:
-        if primary_button("🚀 Instant Build", key=f"bnn_build_{zone_id}", use_container_width=True):
+        if has_blocks and primary_button(
+            "🚀 Instant Build", key=f"bnn_build_{zone_id}", use_container_width=True
+        ):
             try:
                 with st.spinner(f"Building at {build_origin}..."):
                     rcon = RconClient()
@@ -525,6 +684,11 @@ def _section_build(zone: dict, blueprint_done: bool, log_key: str) -> bool:
                 st.session_state[log_key] = log
                 st.toast(f"設置完了：{len(blocks)} blocks", icon="🚀")
                 st.rerun()
+            except ConnectionError as e:
+                st.error(
+                    f"Minecraft サーバーに接続できません: {e}\n\n"
+                    "サーバーが起動していない可能性があります。リポジトリルートで `make up` を実行してから再試行してください。"
+                )
             except Exception as e:
                 st.error(f"Build Failed: {e}")
 
@@ -724,7 +888,9 @@ def render() -> None:
     st.caption(f"{zone.get('type', 'normal')} | サイズ {zone['position']['width']}×{zone['position']['depth']}")
 
     design_state = _zone_design_state(fm, zone_id)
-    bp_done = fm.exists(f"building_{zone_id}_blocks_v2.json")
+    bp_done = fm.exists(f"building_{zone_id}_blocks_v2.json") or fm.exists(
+        f"building_{zone_id}.schem"
+    )
     bp_state = _zone_blueprint_state(fm, zone_id, design_state == "done")
     build_state = _zone_build_state(fm, zone_id, bp_done, server_log_key)
     deco_state = _zone_decorate_state(fm, zone_id, build_state == "done", bot_log_key)

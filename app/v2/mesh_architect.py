@@ -154,15 +154,29 @@ def _clear_mesh_cache(fm: FileManager, zone_id: Any) -> None:
             os.remove(p)
         except OSError:
             pass
-    task_json = fm.get_path(f"tripo_task_{zone_id}.json")
-    if os.path.isfile(task_json):
-        try:
-            os.remove(task_json)
-        except OSError:
-            pass
+    aux_files = [
+        f"tripo_task_{zone_id}.json",
+        f"tripo_stylize_task_{zone_id}.json",
+        f"tripo_texture_task_{zone_id}.json",
+        f"building_{zone_id}.schem",
+        f"building_{zone_id}_schem_meta.json",
+    ]
+    for fn in aux_files:
+        p = fm.get_path(fn)
+        if os.path.isfile(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
 
 
 def _bbox_dict(blocks: List[Dict[str, Any]]) -> Dict[str, int]:
+    if not blocks:
+        return {
+            "min_x": 0, "max_x": 0,
+            "min_y": 0, "max_y": 0,
+            "min_z": 0, "max_z": 0,
+        }
     xs = [int(b["x"]) for b in blocks]
     ys = [int(b["y"]) for b in blocks]
     zs = [int(b["z"]) for b in blocks]
@@ -223,6 +237,11 @@ class MeshArchitect:
         trip_meta: Dict[str, Any] = {}
         cached_paths = _mesh_cache_paths(self.fm.project_dir, zone_id)
         cached_mesh = _pick_mesh_cache(cached_paths)
+        # schem 主軸経路で成功した場合のショートサーキット用フラグ。
+        # True になると GLB ダウンロード／trimesh ボクセル化／semantic pass を
+        # すべてスキップし、`{"blocks": [], "instructions": [], "schem_path": ...}`
+        # を返す。
+        schem_only_path = False
 
         if force:
             _clear_mesh_cache(self.fm, zone_id)
@@ -286,13 +305,84 @@ class MeshArchitect:
                         self.fm.save_json(f"tripo_stylize_task_{zone_id}.json", style_task)
                     except (TypeError, ValueError):
                         pass
-                    final_url = TripoClient.model_url_from_task(style_task)
-                    trip_meta["stylize_model_url"] = final_url
-                    final_task_id_for_download = style_task_id
+
+                    # schem 経路: style=minecraft なら .schem を最優先で保存する。
+                    # 保存成功時は schem を **主成果物** とし、GLB ボクセル化は走らせない。
+                    # schem 保存に失敗、または stylize 自体がメッシュも返した場合は
+                    # ベース GLB / stylize GLB に**フォールバック**してレガシー経路を走らせる。
+                    if TripoClient.has_schem_output(style_task):
+                        try:
+                            schem_url = TripoClient.model_url_from_task(
+                                style_task, prefer_schem=True
+                            )
+                            _p(
+                                "②.4 .schem を保存（WorldEdit 配置用）",
+                                os.path.basename(schem_url) if schem_url else None,
+                            )
+                            schem_path = client.download_schem(
+                                schem_url,
+                                self.fm.project_dir,
+                                f"building_{zone_id}",
+                            )
+                            trip_meta["schem_url"] = schem_url
+                            trip_meta["schem_path"] = schem_path
+                            schem_meta = {
+                                "source": "tripo_stylize",
+                                "schem_path": os.path.basename(schem_path),
+                                "tripo_task_id": style_task_id,
+                                "stylize_style": stylize_kwargs["style"],
+                                "stylize_block_size": stylize_kwargs["block_size"],
+                            }
+                            try:
+                                self.fm.save_json(
+                                    f"building_{zone_id}_schem_meta.json", schem_meta
+                                )
+                            except (TypeError, ValueError):
+                                pass
+                            schem_only_path = True
+                            _p(
+                                "②.5 schem 経路で完了（GLB ボクセル化をスキップ）",
+                                "WorldEdit + RCON でワールドに配置できます",
+                            )
+                        except TripoClientError as schem_err:
+                            trip_meta["schem_error"] = str(schem_err)
+                            _p(
+                                "②.4 .schem 保存に失敗（パイプラインは継続）",
+                                str(schem_err),
+                            )
+
+                    if not schem_only_path:
+                        try:
+                            stylize_url = TripoClient.model_url_from_task(
+                                style_task, mesh_only=True
+                            )
+                            final_url = stylize_url
+                            trip_meta["stylize_model_url"] = final_url
+                            final_task_id_for_download = style_task_id
+                        except TripoClientError as e:
+                            # stylize が .schem のみ返す → ベース GLB で続行
+                            trip_meta["stylize_mesh_error"] = str(e)
+                            final_url = base_url
+                            final_task_id_for_download = task_id
+                            _p("②.3 メッシュ無し（ベース GLB で続行）", str(e))
                 except TripoClientError as e:
-                    # スタイル適用に失敗してもベースメッシュで続行する
                     trip_meta["stylize_error"] = str(e)
-                    _p("②.3 スタイル適用に失敗（ベースメッシュで続行）", str(e))
+                    final_url = base_url
+                    final_task_id_for_download = task_id
+                    _p("②.3 スタイル適用をスキップ（ベース GLB で続行）", str(e))
+
+            # schem 経路で完了している場合はここで早期 return する
+            if schem_only_path:
+                return {
+                    "blocks": [],
+                    "instructions": [],
+                    "schem_path": trip_meta.get("schem_path"),
+                    "debug": {
+                        "tripo": trip_meta,
+                        "palette": list(palette) if palette else None,
+                        "schem_only_path": True,
+                    },
+                }
 
             # --- Optional: Texture Model 後段精製 ---
             if tripo_config is not None and tripo_config.use_texture_model:
@@ -374,8 +464,18 @@ class MeshArchitect:
         blocks = _assigned_to_blocks(assigned)
         blocks, y_shift = _normalize_ground(blocks)
 
+        # ボクセル化が空に終わったケース（解像度過小・メッシュ薄い等）の保護:
+        # semantic_pass / instructions 合成は空配列でも動くが、ユーザーへの説明を
+        # 明示するために早期に分岐ログだけ出しておく。
+        if not blocks:
+            _p(
+                "⑦ ボクセル化結果が空",
+                f"target voxel size = {target_voxel} は小さすぎる可能性があります。"
+                " Settings の voxel_lower_bound を上げて再生成してください。",
+            )
+
         semantic_raw: Dict[str, Any] = {}
-        if not skip_semantic:
+        if blocks and not skip_semantic:
             _p("⑦ Gemini で窓・ドア等を推定", f"voxel count = {len(blocks)}")
             try:
                 semantic_raw = run_semantic_pass(image_path, blocks, building_info)
@@ -383,6 +483,8 @@ class MeshArchitect:
                 semantic_raw = {"error": str(e), "windows": [], "doors": [], "block_overrides": []}
         else:
             semantic_raw = {"windows": [], "doors": [], "block_overrides": []}
+            if not blocks:
+                _p("⑦ semantic pass をスキップ", "blocks が空のため")
 
         bbox = _bbox_dict(blocks)
         semantic = clamp_semantic_to_bbox(semantic_raw, bbox)
@@ -411,5 +513,6 @@ class MeshArchitect:
         return {
             "blocks": blocks,
             "instructions": instructions,
+            "schem_path": trip_meta.get("schem_path"),
             "debug": debug,
         }

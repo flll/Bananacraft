@@ -17,7 +17,9 @@ DEFAULT_BASE_URL = "https://api.tripo3d.ai/v2/openapi"
 DEFAULT_MODEL_VERSION = "v2.5-20250123"
 DEFAULT_TEXTURE_MODEL_VERSION = "v3.0-20250812"
 
-_MODEL_EXTS = frozenset({".glb", ".gltf", ".obj", ".fbx", ".stl", ".ply"})
+_MODEL_EXTS = frozenset({".glb", ".gltf", ".obj", ".fbx", ".stl", ".ply", ".schem"})
+# ボクセル化パイプライン (trimesh) で読めるメッシュ形式
+_MESH_EXTS = frozenset({".glb", ".gltf", ".obj", ".fbx", ".stl", ".ply"})
 
 
 class TripoClientError(Exception):
@@ -29,7 +31,32 @@ def _extension_from_url(url: str) -> str:
     ext = Path(path).suffix.lower()
     if ext in _MODEL_EXTS:
         return ext
-    return ".glb"
+    return ""
+
+
+def _collect_output_urls(output: Any) -> List[str]:
+    """task output 内の http(s) URL を再帰的に集める。"""
+    found: List[str] = []
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, str) and obj.startswith(("http://", "https://")):
+            found.append(obj)
+        elif isinstance(obj, dict):
+            for v in obj.values():
+                walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                walk(v)
+
+    walk(output)
+    # 重複除去 (順序維持)
+    seen: set[str] = set()
+    unique: List[str] = []
+    for u in found:
+        if u not in seen:
+            seen.add(u)
+            unique.append(u)
+    return unique
 
 
 class TripoClient:
@@ -310,31 +337,85 @@ class TripoClient:
         raise TripoClientError(f"Timeout waiting for task {task_id}")
 
     @staticmethod
-    def model_url_from_task(task: Dict[str, Any]) -> str:
-        """タスク output から **GLB を最優先**してダウンロード URL を選ぶ。
+    def model_url_from_task(
+        task: Dict[str, Any],
+        *,
+        mesh_only: bool = True,
+        prefer_schem: bool = False,
+    ) -> str:
+        """タスク output からダウンロード URL を選ぶ。
 
-        Tripo3D は output に複数フォーマットを並べて返してくる:
-        ``{model, pbr_model, base_model, rendered_image, ...}``。
-        texture_model / stylize_model のレスポンスでは ``pbr_model`` に FBX URL が、
-        ``model`` 側に GLB URL が入っていることがある。
-        Bananacraft の mesh_loader は GLB しか扱えないので、拡張子で GLB を優先する。
+        Tripo3D は output に複数フォーマットを並べて返す:
+        ``{model, pbr_model, base_model, ...}`` ほかキーに URL が散らばることもある。
+
+        ``stylize_model`` で ``style=minecraft`` のとき、``.schem`` (gzip 圧縮の
+        WorldEdit スキマティック) が返る。Bananacraft の新主軸 (schem 経路) では
+        この URL をそのまま欲しいので ``prefer_schem=True`` を指定する。
+        従来のボクセル化経路は ``mesh_only=True`` (既定) で GLB を最優先し、
+        schem のみのときは ``TripoClientError`` を投げる。
+
+        Args:
+            mesh_only: True なら ``.schem`` を候補から外す (既定)。
+            prefer_schem: True なら ``.schem`` を最優先で返す。``mesh_only`` は無視される。
         """
         out = task.get("output") or {}
-        candidates = [
-            out.get("pbr_model"),
-            out.get("model"),
-            out.get("base_model"),
-        ]
-        candidates = [str(u) for u in candidates if u]
+        candidates = _collect_output_urls(out)
         if not candidates:
             raise TripoClientError(f"No model URL in task output: {out}")
 
-        # 拡張子優先順: .glb > .gltf > .obj > .stl > .ply > .fbx
-        order = {".glb": 0, ".gltf": 1, ".obj": 2, ".stl": 3, ".ply": 4, ".fbx": 9}
+        if prefer_schem:
+            schem_candidates = [
+                u for u in candidates if _extension_from_url(u) == ".schem"
+            ]
+            if not schem_candidates:
+                raise TripoClientError(
+                    f"No .schem URL in task output. Got: {candidates[:3]}"
+                )
+            return schem_candidates[0]
+
+        if mesh_only:
+            mesh_candidates = [
+                u for u in candidates if _extension_from_url(u) in _MESH_EXTS
+            ]
+            if not mesh_candidates:
+                schem_only = [u for u in candidates if _extension_from_url(u) == ".schem"]
+                if schem_only:
+                    raise TripoClientError(
+                        "Tripo の stylize_model が Minecraft 用 .schem ファイルのみ返しました。"
+                        " Bananacraft のボクセル化には GLB メッシュが必要です。"
+                        " style を None にするか、image_to_model の GLB で続行してください。"
+                    )
+                raise TripoClientError(
+                    f"No mesh URL (.glb etc.) in task output, only: {candidates[:3]}"
+                )
+            candidates = mesh_candidates
+
+        # 拡張子優先順: .glb > .gltf > .obj > .stl > .ply > .fbx > 不明
+        order = {
+            ".glb": 0,
+            ".gltf": 1,
+            ".obj": 2,
+            ".stl": 3,
+            ".ply": 4,
+            ".fbx": 9,
+            "": 50,
+            ".schem": 100,
+        }
+
         def _rank(url: str) -> int:
-            return order.get(_extension_from_url(url), 5)
+            return order.get(_extension_from_url(url), 50)
+
         candidates.sort(key=_rank)
         return candidates[0]
+
+    @staticmethod
+    def has_schem_output(task: Dict[str, Any]) -> bool:
+        """task output に ``.schem`` URL が含まれるか判定する。"""
+        out = task.get("output") or {}
+        for u in _collect_output_urls(out):
+            if _extension_from_url(u) == ".schem":
+                return True
+        return False
 
     @staticmethod
     def _validate_downloaded_file(path: str, ext: str) -> None:
@@ -351,9 +432,17 @@ class TripoClient:
         ext = ext.lower()
         if ext == ".glb":
             if head[:4] != b"glTF":
-                sneak = head[:200].decode("utf-8", errors="replace")
+                if head[:2] == b"\x1f\x8b":
+                    raise TripoClientError(
+                        "ダウンロードしたファイルは GLB ではなく gzip 圧縮データです"
+                        "（多くの場合 Tripo stylize_model の .schem 出力）。"
+                        " Settings で style を None にするか、「Tripo を必ず再実行」で"
+                        " image_to_model の GLB を使ってください。"
+                    )
+                sneak = head[:120].decode("utf-8", errors="replace")
                 raise TripoClientError(
-                    f"Expected GLB magic glTF, got {head[:20]!r}. Snippet: {sneak!r}"
+                    f"GLB ではありません（先頭バイト {head[:4]!r}）。"
+                    f" Tripo が別形式を返した可能性があります。"
                 )
         elif ext == ".gltf":
             s = head.lstrip()
@@ -373,7 +462,12 @@ class TripoClient:
         Authorization ヘッダは付けない（一部 CDN で本文が壊れるのを避ける）。
         URL パスから拡張子を推定、なければ .glb。
         """
-        ext = _extension_from_url(url)
+        ext = _extension_from_url(url) or ".glb"
+        if ext not in _MESH_EXTS:
+            raise TripoClientError(
+                f"Unsupported mesh extension {ext!r} from URL. "
+                f"Bananacraft needs .glb (stylize may return .schem for minecraft style)."
+            )
         Path(save_dir).mkdir(parents=True, exist_ok=True)
         out_path = os.path.join(save_dir, f"{base_name}{ext}")
 
@@ -388,4 +482,48 @@ class TripoClient:
             raise TripoClientError(f"Model download failed: {e}") from e
 
         self._validate_downloaded_file(out_path, ext)
+        return out_path
+
+    def download_schem(self, url: str, save_dir: str, base_name: str) -> str:
+        """
+        Tripo `stylize_model` で `style=minecraft` のとき返る ``.schem`` を取得。
+
+        ``save_dir / {base_name}.schem`` に保存し、ファイル先頭の gzip マジック
+        (``0x1f 0x8b``) を軽く検証する。空ファイルや HTML エラーページが混入した
+        場合は ``TripoClientError`` を投げる。
+        """
+        Path(save_dir).mkdir(parents=True, exist_ok=True)
+        out_path = os.path.join(save_dir, f"{base_name}.schem")
+
+        try:
+            with requests.get(url, stream=True, timeout=300) as r:
+                r.raise_for_status()
+                with open(out_path, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+        except requests.RequestException as e:
+            raise TripoClientError(f"Schem download failed: {e}") from e
+
+        try:
+            with open(out_path, "rb") as f:
+                head = f.read(8)
+        except OSError as e:
+            raise TripoClientError(f"Could not read downloaded schem: {e}") from e
+
+        if not head:
+            raise TripoClientError("Downloaded schem is empty")
+        stripped = head.lstrip()
+        if stripped.startswith(b"<") or stripped.startswith(b"<!DOCTYPE"):
+            raise TripoClientError(
+                f"Schem download looks like an HTML error page: {head[:120]!r}"
+            )
+        if head[:2] != b"\x1f\x8b":
+            # WorldEdit Sponge Schematic は通常 gzip 圧縮。生 NBT で来ることもあるが
+            # 警告レベル: 0x0a (TAG_Compound) で始まれば許容。
+            if head[:1] != b"\x0a":
+                raise TripoClientError(
+                    f"Schem is not gzip/NBT (head={head[:4]!r}). Tripo が別形式を返した可能性。"
+                )
+
         return out_path

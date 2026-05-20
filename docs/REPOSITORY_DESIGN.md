@@ -18,6 +18,7 @@
 10. [拡張・改修ガイド](#10-拡張改修ガイド)
 11. [レガシー・周辺コード](#11-レガシー周辺コード)
 12. [用語メモ](#12-用語メモ)
+13. [製品方針: Tripo `.schem` と WorldEdit 配置](#13-製品方針-tripo-schem-と-worldedit-配置)
 
 ---
 
@@ -215,7 +216,7 @@ flowchart TB
 ## 9. デプロイと運用
 
 - [setup.sh](../setup.sh): 仮想環境・依存関係・Streamlit 等の一括セットアップ。
-- [docker-compose.yml](../docker-compose.yml): **`minecraft`**（Purpur **26.1.2**、フラット、Modrinth: EssentialsX / WorldEdit、ホスト **28888** / **28889**）と **`bananacraft`**。[Makefile](../Makefile): `make mc-up` / `make mc-attach` / `make mc-reset` / `make stack-up` / `make run`。
+- [docker-compose.yml](../docker-compose.yml): **`minecraft`**（Purpur **26.1.2**、フラット、Modrinth: WorldEdit、任意で BlueMap、ホスト **28888** / **28889** / 任意 **8100**）と **`bananacraft`**。UI コンテナは `RCON_HOST=minecraft` で compose 内 DNS を使い、`./minecraft-data` を `/minecraft-data` にマウントして WorldEdit の schematics ディレクトリを共有する。[Makefile](../Makefile): `make up` / `make down` / `make logs` / `make attach` / `make reset` / `make dev`（ホスト Streamlit）。
 - [minecraft/README.md](../minecraft/README.md): ポート・プラグイン・移行手順。
 - [deployment/bananacraft.service](../deployment/bananacraft.service): `streamlit run app/main.py --server.port 8501`。`User` / `WorkingDirectory` / `ExecStart` のパスは **実環境のユーザー名に合わせて編集**すること。
 - [deployment/minecraft.service](../deployment/minecraft.service): 手動 `server.jar` 運用用（Docker を使う場合は不要）。
@@ -283,7 +284,119 @@ flowchart TB
 | Blueprint | `building_<id>_instructions.json`（ツール呼び出しの列） |
 | Carpenter | ツールを実行してブロック列へ落とすエンジン |
 | v2 blocks | `building_<id>_blocks_v2.json`（RCON `build_voxels` 向け） |
+| schem 経路 | Tripo `.schem` を WorldEdit + RCON でそのまま配置するパイプライン（§13） |
 | AI Carpenter Bot | Mineflayer で `setblock` を順次実行する Node プロセス |
+
+---
+
+## 13. 製品方針: Tripo `.schem` と WorldEdit 配置
+
+本セクションは「**画像 → Tripo Minecraft スタイル → ワールド配置**」の第一級経路を `.schem` で実現する方針メモです。実装は段階的に進めており、当面は GLB→ボクセル→`build_voxels` の従来パイプラインと並走させます（壊れたら戻れるように残す）。
+
+### 13.1 なぜ `.schem` を主軸にするのか
+
+- Tripo `stylize_model` で `style=minecraft` を指定すると、出力は GLB メッシュではなく **`.schem`（gzip 圧縮の Sponge Schematic NBT）** が返ります。中に **ブロック ID（`minecraft:oak_log`、`minecraft:oak_stairs`、`minecraft:oak_fence` 等）、向き、座標**が直接含まれます。
+- 従来パイプライン（[app/v2/mesh_architect.py](../app/v2/mesh_architect.py) + [app/v2/texture_atlas.py](../app/v2/texture_atlas.py)）は **GLB を trimesh でボクセル化 → 各 voxel のテクスチャ色から最近傍ブロックを推定**する設計です。Tripo がすでにブロックを確定して返してくれる以上、**色推定は不要**で、`.schem` をそのまま使う方が品質・保守性ともに高い。
+- 結論として、本リポジトリの建築は将来的に **「Tripo schem → WorldEdit paste」が正系**、`build_voxels` 経路は GLB しか手に入らないケースのフォールバックという位置付けになります。
+
+### 13.2 現状のギャップ（2026-05 時点）
+
+- [app/tripo_client.py](../app/tripo_client.py) の `model_url_from_task(mesh_only=True)` は `.schem` を意図的に **除外**しています。これは GLB 前提だった以前のパイプラインを壊さないための暫定措置です。
+- [app/v2/mesh_architect.py](../app/v2/mesh_architect.py) は stylize が `.schem` のみ返したとき、`image_to_model` のベース GLB に **フォールバック**してパイプラインを続行します（色推定経路）。
+- したがって **schem が来ても捨てている**のが現状で、新経路（13.3）はこの 2 ファイルの分岐を増やすことで成立します。
+
+### 13.3 目標アーキテクチャ
+
+```mermaid
+flowchart LR
+  subgraph primary [新主軸 schem 経路]
+    Img[コンセプト画像]
+    Tripo[Tripo stylize minecraft]
+    Schem[".schem ファイル"]
+    Copy[schematics ディレクトリへコピー]
+    WE[WorldEdit load + paste via RCON]
+    MC[(Minecraft ワールド)]
+    Img --> Tripo --> Schem --> Copy --> WE --> MC
+  end
+  subgraph legacy [当面維持する従来経路]
+    GLB[image_to_model GLB]
+    Vox[trimesh ボクセル化]
+    Tex[テクスチャ色からブロック推定]
+    RLE[RCON build_voxels fill setblock]
+    GLB --> Vox --> Tex --> RLE --> MC
+  end
+```
+
+**プレビューの定義（重要）**: schem 経路では Streamlit 内の 3D プレビューは**必須ではない**。ユーザーが `localhost:28888` でワールドに入って確認することを「プレビュー成功」とみなします。schem の解析プレビュー（ブロック種カウント等）は任意拡張（13.7）。
+
+### 13.4 RCON の二系統
+
+| 系統 | 入力 | コマンド | 用途 |
+|------|------|----------|------|
+| 既存 `RconClient.build_voxels` | `building_<id>_blocks_v2.json` | `setblock` / `fill` バッチ | GLB 経由のボクセル建築 |
+| 新規 `schem_deploy` | `building_<id>.schem` | `//schem load` + `//paste` | Tripo schem の現地配置 |
+
+両者は **`SimpleRcon` / `RconClient.connect_and_send` を共有**し、コマンド生成だけ別モジュールに分けます（責務分離）。新規モジュールは [app/v2/schem_deploy.py](../app/v2/schem_deploy.py) を予定。
+
+### 13.5 成果物（追加予定）
+
+| ファイル | 内容 |
+|----------|------|
+| `projects/<name>/building_<id>.schem` | Tripo がそのまま返した Sponge Schematic |
+| `projects/<name>/building_<id>_schem_meta.json` | `tripo_task_id`、`bounds`、任意で palette カウント |
+
+`FileManager` のグローバル成果物・ゾーン成果物の表（§5）に **schem 経路用 1〜2 行を追記**してください（実装フェーズ）。
+
+### 13.6 WorldEdit 連携の前提
+
+- Compose 側で **WorldEdit プラグインが同梱済み**: [docker-compose.yml](../docker-compose.yml) `MODRINTH_PROJECTS: worldedit`、[minecraft/README.md](../minecraft/README.md) を参照。
+- schematics ディレクトリ（itzg 標準）: ホスト側 `minecraft-data/plugins/WorldEdit/schematics/<name>.schem`。
+- `make up` で起動する Bananacraft コンテナは [docker-compose.yml](../docker-compose.yml) で `./minecraft-data` を `/minecraft-data` にマウントし、`WORLDEDIT_SCHEM_DIR=/minecraft-data/plugins/WorldEdit/schematics` を渡しているので、UI から WorldEdit の schematics に直接書き込める。ホスト Streamlit (`make dev`) のときは [`app/v2/schem_deploy.py`](../app/v2/schem_deploy.py) `default_schematics_dir()` がリポジトリ相対の `./minecraft-data/plugins/WorldEdit/schematics/` を返す。
+- コマンド列（Purpur 26.1.2 + WorldEdit 7 想定、コンソール RCON 実行）:
+
+```
+gamerule sendCommandFeedback false
+//world <overworld 名>
+//pos1 <ox> <oy> <oz>
+//schem load <name>
+//paste -a
+gamerule sendCommandFeedback true
+```
+
+サーバーコンソール（RCON 接続元）は **プレイヤーではなく `Server`** なので、`//paste` の基準点を **`//pos1`** で明示する必要がある点に注意。WorldEdit のバージョンによっては `//paste -ao <x> <y> <z>` 形式の方が安定することがあるため、初回統合時に [minecraft/README.md](../minecraft/README.md) に **動作確認済みコマンドを固定**してください。
+
+### 13.7 任意拡張: schem の軽量解析
+
+ユーザーに「中身が見える」UI を提供したい場合のみ実装:
+
+- 依存に `nbtlib`（[requirements.txt](../requirements.txt) に追加）
+- Sponge Schematic v2/v3 の `Palette` を読み、`oak_log: 120` のような **ブロック種 Top N** を Streamlit に表示
+- WorldEdit による配置自体には不要（WorldEdit が NBT をパースする）
+
+### 13.8 後回しの整理候補（**今は削除しない**）
+
+新経路が安定するまでは以下を**並走で残す**。schem 経路が本番品質になった後、ユーザー明示でレガシー削除フェーズに入る:
+
+- [app/v2/texture_atlas.py](../app/v2/texture_atlas.py)（手作り + 公式アトラス）
+- [app/v2/voxel_glb_builder.py](../app/v2/voxel_glb_builder.py) と [app/v2/glb_viewer.py](../app/v2/glb_viewer.py) の Voxel プレビュー
+- [app/v2/mesh_architect.py](../app/v2/mesh_architect.py) のテクスチャ色からブロック推定するステップ
+- [app/v2/mc_assets.py](../app/v2/mc_assets.py) / `mc_assets_runtime.py`（Mojang jar 自動 DL）
+- 一部の voxelizer（`app/voxelizer/` 系）
+
+### 13.9 リスクと回避策
+
+| リスク | 回避策 |
+|--------|--------|
+| Tripo schem のブロック ID と Purpur 26.1.2 のミスマッチ | 初回 paste 時にコンソールログを確認、必要ならブロックリマップ層を `schem_deploy` に追加 |
+| `//paste` が RCON コンソールから拒否される | `make attach` で手動再現し、動くコマンド列を [minecraft/README.md](../minecraft/README.md) に固定 |
+| 大規模 schem の paste タイムアウト | [app/rcon_client.py](../app/rcon_client.py) の socket timeout を延長、または将来 FAWE 導入を検討 |
+| Bananacraft コンテナから `minecraft-data` へ書けない | `WORLDEDIT_SCHEM_DIR` env で明示、または [docker-compose.yml](../docker-compose.yml) で volume 共有 |
+| schem が `.schematic`（旧形式）で返る | WorldEdit 7 系は両対応。拡張子で判別、コマンド変更不要 |
+
+### 13.10 Tripo クライアント側の留意
+
+- `style=minecraft` のときの URL は拡張子なしまたは `.schem` で、ファイル先頭は **`0x1f 0x8b`（gzip マジック）**。[app/tripo_client.py](../app/tripo_client.py) の `_extension_from_url` が拡張子無しを `.glb` と誤判定しないよう、stylize + minecraft 時は **schem 優先**でロジック分岐すること。
+- `model_url_from_task` には `mesh_only=False` または専用フラグ（例: `prefer_schem=True`）を追加し、Building の進行状況を `glb_ready` / `schem_ready` の 2 状態で表現するのが良い。
 
 ---
 
@@ -294,3 +407,4 @@ flowchart TB
 - [ ] `VALID_BLOCKS`（および各ツールのマテリアル制約）を更新したか
 - [ ] `.env.example` と README の記述を更新したか（新しい環境変数がある場合）
 - [ ] systemd の `WorkingDirectory` が `projects/` 相対パスと整合するか
+- [ ] schem 経路（§13）に影響する場合、`tripo_client.model_url_from_task`、`mesh_architect`、`schem_deploy`、`building.py` UI の 4 箇所を確認したか

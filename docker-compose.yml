@@ -1,8 +1,9 @@
 # Bananacraft — localhost / 本番兼用の Compose 定義
 # 使い方:
-#   make mc-up      … Purpur Minecraft のみ（ゲーム :28888 / RCON :28889）
-#   make mc-attach  … サーバーコンソールへ接続（デタッチ: Ctrl+P, Ctrl+Q）
-#   make stack-up   … Minecraft + Bananacraft UI
+#   make up     … Minecraft (Purpur + WorldEdit, BlueMap 任意) + Bananacraft UI を一括起動
+#   make down   … 全サービス停止
+#   make logs   … サービスのログを追跡
+#   make attach … Minecraft サーバーコンソールへ接続（デタッチ: Ctrl+P, Ctrl+Q）
 # UI: http://localhost:8501
 
 name: bananacraft
@@ -16,6 +17,8 @@ services:
     ports:
       - "28888:28888"
       - "28889:28889"
+      # BlueMap Web UI（ENABLE_BLUEMAP=true のとき有効。docker は使われないポートも bind するが衝突がないなら害は無い）
+      - "${BLUEMAP_PORT:-8100}:8100"
     environment:
       EULA: "TRUE"
       TYPE: PURPUR
@@ -29,7 +32,8 @@ services:
       ONLINE_MODE: ${MC_ONLINE_MODE:-FALSE}
       MAX_PLAYERS: ${MC_MAX_PLAYERS:-10}
       DIFFICULTY: ${MC_DIFFICULTY:-normal}
-      MODRINTH_PROJECTS: worldedit
+      # ENABLE_BLUEMAP=true で bluemap も Modrinth から取得される（Makefile が解決）
+      MODRINTH_PROJECTS: ${MODRINTH_PROJECTS:-worldedit}
       MODRINTH_ALLOWED_VERSION_TYPE: release
     volumes:
       - ./minecraft-data:/data
@@ -58,9 +62,18 @@ services:
     env_file:
       - .env
     environment:
-      RCON_HOST: ${RCON_HOST:-localhost}
+      # Compose 内の DNS で minecraft コンテナを名前解決する。
+      # ホストから make dev で動かすときは .env の RCON_HOST=localhost を使う。
+      RCON_HOST: minecraft
       RCON_PORT: ${RCON_PORT:-28889}
       RCON_PASSWORD: ${RCON_PASSWORD:-bananacraft}
+      MC_HOST: minecraft
+      MC_PORT: "28888"
+      # WorldEdit の schematics ディレクトリを Bananacraft からも書き込めるよう共有マウントを参照する
+      WORLDEDIT_SCHEM_DIR: /minecraft-data/plugins/WorldEdit/schematics
+      # //paste 時に使うワールド名（itzg のデフォルト LEVEL_NAME は "world"）
+      BANANACRAFT_MC_WORLD: ${BANANACRAFT_MC_WORLD:-world}
     volumes:
       - ./projects:/app/projects
+      - ./minecraft-data:/minecraft-data
     restart: unless-stopped
