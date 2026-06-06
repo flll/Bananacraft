@@ -4,6 +4,8 @@ This is the deployment version of Bananacraft, stripped of legacy code and optim
 
 開発者向けのリポジトリ設計・データフロー・改修ガイドは [docs/REPOSITORY_DESIGN.md](docs/REPOSITORY_DESIGN.md) を参照してください。
 
+**既知の課題（サイズ不一致・1 ブロック=1 ブロック等）** は [docs/KNOWN_CHALLENGES.md](docs/KNOWN_CHALLENGES.md) に集約。**Tripo / Minecraft ノウハウ** は [docs/TRIPO_MINECRAFT.md](docs/TRIPO_MINECRAFT.md) を参照。
+
 ## アプリの流れ（UI v2）
 
 `st.navigation` ベースのマルチページ構成で、画面上部の **横ステッパー** が常に現在地を示します。
@@ -64,6 +66,29 @@ docker compose up --build -d
 ```
 
 UI コンテナは `depends_on` で Minecraft の healthcheck を待ってから起動します。コンテナ間は compose 内の DNS で `minecraft` を名前解決するため、`.env` の `RCON_HOST=minecraft` が既定です（`make dev` でホスト直起動するときだけ `localhost` に書き換えてください）。
+
+## Tailscale（tailnet のみ）
+
+接続経路: **あなた → Cursor（Windows）→ Tailscale SSH → `lll-legacy`**
+
+| 用途 | コマンド / URL |
+|------|----------------|
+| **Tailnet デプロイ（推奨）** | **`make deploy bananacraft`**（UI のみ・ホスト `8501` なし） |
+| デプロイ手順 | [infra/tailscale-deploy.md](infra/tailscale-deploy.md) |
+| `TS_AUTHKEY` | `~/.cursor/.env`（[infra/cursor.env.example](infra/cursor.env.example)）または `secret.env` |
+| ACL 前提 | [infra/tailscale-acl-snippet.json](infra/tailscale-acl-snippet.json) を Admin に追加 |
+| 正本 `secret.env` | `C:\Users\no5\OneDrive\keys\cursor-secrets\secret.env`（OneDrive） |
+| リモートへ同期 | Windows: `.\infra\push-secret-env.ps1 lll-legacy` |
+| 初回キー発行 | リモート: `make tailscale-keys`（`tag:bananacraft`） |
+| レガシー起動 | `make up-tailscale`（非推奨 — MC+UI 一体） |
+| UI（tailnet 内） | `http://bananacraft:8501` |
+| Minecraft | `bananacraft-mc:28888`（`make deploy minecraft` は未実装） |
+
+- UI サイドカー: [docker-compose.tailscale-ui.yml](docker-compose.tailscale-ui.yml)（`make deploy`）
+- フル stack: [docker-compose.tailscale.yml](docker-compose.tailscale.yml)（将来の MC tailnet 用）
+- ホストの `8501` / `28888` は tailnet デプロイ時は公開しない
+- 詳細: [infra/services.yaml](infra/services.yaml)、Cursor スキル `infra-accounts`
+- GCP Secret Manager（`cursor-secret`）: [infra/gcp/README.md](infra/gcp/README.md)
 
 ## 📦 Contents
 - **app/**: Streamlit Application (v2)

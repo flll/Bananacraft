@@ -10,6 +10,8 @@ name: bananacraft
 
 services:
   minecraft:
+    profiles:
+      - local
     image: itzg/minecraft-server:latest
     container_name: bananacraft-minecraft
     stdin_open: true

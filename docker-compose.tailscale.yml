@@ -1,0 +1,64 @@
+# Tailscale サイドカー（tailnet のみ。ホスト ports 公開なし）
+#   make up-tailscale
+# 正本 secret.env: Windows OneDrive → リモート ~/.cursor/secrets/secret.env へ push
+# PR #23: cap_add は net_admin のみ（sys_module 不要）
+
+name: bananacraft
+
+services:
+  tailscale-minecraft:
+    image: tailscale/tailscale:latest
+    container_name: bananacraft-tailscale-mc
+    hostname: bananacraft-mc
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?TS_AUTHKEY is required in secret.env}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:---advertise-tags=tag:bananacraft --accept-dns=true}
+    volumes:
+      - tailscale-mc-state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+    restart: unless-stopped
+
+  minecraft:
+    network_mode: service:tailscale-minecraft
+    depends_on:
+      tailscale-minecraft:
+        condition: service_started
+    ports: !reset []
+
+  tailscale-bananacraft:
+    image: tailscale/tailscale:latest
+    container_name: bananacraft-tailscale-ui
+    hostname: bananacraft
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?TS_AUTHKEY is required in secret.env}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:---advertise-tags=tag:bananacraft --accept-dns=true}
+    volumes:
+      - tailscale-ui-state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+    restart: unless-stopped
+
+  bananacraft:
+    network_mode: service:tailscale-bananacraft
+    depends_on:
+      tailscale-bananacraft:
+        condition: service_started
+      minecraft:
+        condition: service_healthy
+    ports: !reset []
+    environment:
+      RCON_HOST: bananacraft-mc
+      MC_HOST: bananacraft-mc
+
+volumes:
+  tailscale-mc-state:
+  tailscale-ui-state:

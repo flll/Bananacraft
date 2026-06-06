@@ -1,0 +1,39 @@
+# Tailscale サイドカー — Streamlit UI のみ（Minecraft 非依存）
+#   make deploy
+#   make deploy bananacraft
+# 正本 TS_AUTHKEY: ~/.cursor/.env（infra/cursor.env.example）または secret.env
+# フル stack（MC+UI）: docker-compose.tailscale.yml + make up-tailscale（非推奨）
+
+name: bananacraft
+
+services:
+  tailscale-bananacraft:
+    image: tailscale/tailscale:latest
+    container_name: bananacraft-tailscale-ui
+    hostname: bananacraft
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?TS_AUTHKEY is required — set in ~/.cursor/.env or secret.env}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:---advertise-tags=tag:bananacraft --accept-dns=true}
+    volumes:
+      - tailscale-ui-state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+    restart: unless-stopped
+
+  bananacraft:
+    network_mode: service:tailscale-bananacraft
+    depends_on: !reset
+      tailscale-bananacraft:
+        condition: service_started
+    ports: !reset []
+    environment:
+      # MC サイドカー未起動時は RCON 接続不可（UI のみ閲覧は可能）
+      RCON_HOST: bananacraft-mc
+      MC_HOST: bananacraft-mc
+
+volumes:
+  tailscale-ui-state:

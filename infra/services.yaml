@@ -1,0 +1,24 @@
+# Bananacraft Tailscale メタデータ（非機密）。正本 secret.env は OneDrive。
+service: bananacraft
+tailscale_tag: tag:bananacraft
+
+deploy_command: make deploy bananacraft
+deploy_all_command: make deploy
+deploy_docs: infra/tailscale-deploy.md
+cursor_env_example: infra/cursor.env.example
+acl_snippet: infra/tailscale-acl-snippet.json
+
+nodes:
+  - hostname: bananacraft
+    role: streamlit-ui
+    ports: [8501]
+    deploy: make deploy bananacraft
+  - hostname: bananacraft-mc
+    role: minecraft
+    ports: [28888, 28889, 8100]
+    deploy: make deploy minecraft  # 未実装
+
+secrets:
+  windows_canonical: "C:\\Users\\no5\\OneDrive\\keys\\cursor-secrets\\secret.env"
+  remote_runtime: "~/.cursor/secrets/secret.env"
+  cursor_env: "~/.cursor/.env"
