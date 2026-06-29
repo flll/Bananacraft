@@ -332,6 +332,9 @@ class MeshArchitect:
                                 "tripo_task_id": style_task_id,
                                 "stylize_style": stylize_kwargs["style"],
                                 "stylize_block_size": stylize_kwargs["block_size"],
+                                "zone_width": width,
+                                "zone_depth": depth,
+                                "target_blocks": max(width, depth),
                             }
                             try:
                                 self.fm.save_json(

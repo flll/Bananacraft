@@ -19,6 +19,8 @@ def _embed_model_viewer(
     bg_color: str,
     auto_rotate: bool,
     alt: str,
+    exposure: float = 1.1,
+    shadow_intensity: float = 1.1,
 ) -> bool:
     """GLB bytes を `<model-viewer>` として埋め込む内部実装。"""
     b64 = base64.b64encode(data).decode("ascii")
@@ -47,8 +49,8 @@ def _embed_model_viewer(
     alt="{alt}"
     camera-controls
     {rotate_attr}
-    shadow-intensity="1.1"
-    exposure="1.1"
+    shadow-intensity="{shadow_intensity}"
+    exposure="{exposure}"
     interaction-prompt="auto"
     interaction-prompt-style="basic"
     environment-image="neutral"
@@ -69,7 +71,7 @@ def render_glb(
     *,
     height: int = 520,
     bg_color: str = "#1A1108",
-    auto_rotate: bool = True,
+    auto_rotate: bool = False,
 ) -> bool:
     """GLB ファイルを `<model-viewer>` で埋め込み表示する。
 
@@ -112,6 +114,8 @@ def render_glb_bytes(
     auto_rotate: bool = False,
     caption: Optional[str] = None,
     alt: str = "Voxel preview",
+    exposure: float = 1.1,
+    shadow_intensity: float = 1.1,
 ) -> bool:
     """GLB バイナリを直接 `<model-viewer>` で表示する。
 
@@ -134,6 +138,8 @@ def render_glb_bytes(
         bg_color=bg_color,
         auto_rotate=auto_rotate,
         alt=alt,
+        exposure=exposure,
+        shadow_intensity=shadow_intensity,
     )
     if not ok:
         return False

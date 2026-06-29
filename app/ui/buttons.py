@@ -58,6 +58,7 @@ def danger_button(
     cancel_label: str = "キャンセル",
     help: Optional[str] = None,
     on_confirm: Optional[Callable[[], None]] = None,
+    disabled: bool = False,
     use_container_width: bool = False,
 ) -> bool:
     """破壊的操作。クリック → 確認ダイアログを経て初めて True を返す。
@@ -69,6 +70,7 @@ def danger_button(
         label,
         key=key,
         help=help,
+        disabled=disabled,
         type="secondary",
         use_container_width=use_container_width,
     )

@@ -53,8 +53,8 @@ def deploy_schem(
 
     Args:
         local_path: ``projects/<name>/building_<id>.schem`` 等のパス。
-        schematic_name: WorldEdit から ``//schem load <name>`` で参照する名前
-            （拡張子なし）。
+        schematic_name: ``//schem load <name>.schem`` で参照する名前
+            （拡張子なしで渡し、ディスク上は ``<name>.schem`` として保存される）。
         schematics_dir: 上書きしたい場合に指定。既定は :func:`default_schematics_dir`。
 
     Returns:
@@ -124,7 +124,8 @@ def build_paste_commands(
     地形を残したまま建物だけ配置する。
 
     Args:
-        schematic_name: ``//schem load <name>`` で読む名前 (拡張子なし)。
+        schematic_name: ``//schem load <name>.schem`` で読む名前 (拡張子なしで渡し、
+            コマンド組み立て時に ``.schem`` を付与する)。
         origin: paste 基準点 (x, y, z)。``building.py`` の ``_build_origin_for``
             と同じ座標系。
         world_name: paste 先のワールド名。未指定なら ``BANANACRAFT_MC_WORLD``
@@ -140,14 +141,17 @@ def build_paste_commands(
     """
     ox, oy, oz = origin
     safe_name = schematic_name.strip()
+    if safe_name.lower().endswith(".schem"):
+        schem_arg = safe_name
+    else:
+        schem_arg = f"{safe_name}.schem"
     world = _resolve_world_name(world_name)
     return [
         f"//world {world}",
         f"//pos1 {ox},{oy},{oz}",
-        f"//pos2 {ox},{oy},{oz}",
-        f"//schem load {safe_name}",
+        f"//schem load {schem_arg}",
         "//paste -a",
-        f"say Bananacraft: pasted {safe_name} at {ox},{oy},{oz} (world={world})",
+        f"say Bananacraft: pasted {schem_arg} at {ox},{oy},{oz} (world={world})",
     ]
 
 
@@ -161,7 +165,7 @@ def paste_via_rcon(
     """WorldEdit を RCON 越しに駆動して schem を配置する。
 
     Args:
-        schematic_name: ``//schem load <name>`` で読む名前（拡張子なし）。
+        schematic_name: ``//schem load <name>.schem`` で読む名前（拡張子なしで渡す）。
         origin: paste 基準点 (x, y, z)。
         world_name: 任意。複数ワールドがある場合に明示する。
         rcon: テスト時に差し替え可能な :class:`RconClient`。

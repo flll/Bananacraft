@@ -86,6 +86,7 @@ class TripoConfig:
     face_limit: int = 30000
     quad: bool = False
     auto_size: bool = False
+    orientation: str = "default"
 
     # --- Texture 設定 --------------------------------------------------
     texture_quality: str = "detailed"
@@ -129,12 +130,11 @@ class TripoConfig:
         """zone の最長辺ブロック数から派生した TripoConfig を返す。
 
         - GLB 経路: voxel_lower_bound = voxel_upper_bound = target_blocks
-          （`MeshArchitect` の ``target_voxel = max(lo, min(hi, max(w,d)))`` が
-          そのまま target_blocks に確定する）
         - schem 経路: style_block_size = stylize_block_for_target(target_blocks)
-          （Tripo の block_size は粒度なので逆比例で算出）
 
-        ``self.auto_size_from_zone`` が False なら上書きせずそのまま返す。
+        **注意:** これは Tripo の ``block_size`` / voxel 解像度のヒントであり、
+        出力 ``.schem`` の W×D×H をゾーンにクランプするものではない。
+        サイズ不一致は [docs/KNOWN_CHALLENGES.md](../../docs/KNOWN_CHALLENGES.md) §1 参照。
         """
         if not self.auto_size_from_zone:
             return self
@@ -144,6 +144,8 @@ class TripoConfig:
             voxel_lower_bound=n,
             voxel_upper_bound=n,
             style_block_size=stylize_block_for_target(n),
+            orientation="align_image",
+            auto_size=True,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -173,6 +175,7 @@ class TripoConfig:
             "geometry_quality": self.geometry_quality,
             "texture_alignment": self.texture_alignment,
             "auto_size": bool(self.auto_size),
+            "orientation": self.orientation,
             "quad": bool(self.quad),
             "model_seed": int(self.model_seed) if self.model_seed is not None else None,
             "texture_seed": int(self.texture_seed) if self.texture_seed is not None else None,
@@ -277,23 +280,19 @@ class TripoConfig:
 
 
 def stylize_block_for_target(target_blocks: int) -> int:
-    """target_blocks (最長辺ブロック数) → Tripo stylize_model の ``block_size``.
+    """target_blocks (最長辺) → Tripo stylize_model ``block_size`` (32–128).
 
-    Tripo の ``block_size`` はピクセル単位の「1 ブロック相当の大きさ」で、
-    値が小さいほどメッシュ細部が出る（=最終ブロック数が増える）。
-    建物の最長辺 N と block_size を逆比例させ、デフォルトの
-    ``block_size=80`` を ``target_blocks=32`` のときに復元する近似マップ:
+    Tripo / 中国語 UI より: **小 = 細かい = 外接大** / **大 = 粗い = 外接縮小の可能性**。
+    小ゾーンほど block_size を大きく（128 寄り）する。
 
-        target_blocks=8   → block_size=160 (粗・極小)
-        target_blocks=16  → block_size=160 (粗)
-        target_blocks=32  → block_size=80  (現行デフォルト)
-        target_blocks=48  → block_size=53
-        target_blocks=64  → block_size=40
-        target_blocks=96  → block_size=27  → clamp 24
+        target_blocks=12  → 128
+        target_blocks=32  → 99
+        target_blocks=96  → 32
     """
-    n = max(4, int(target_blocks))
-    raw = round(80 * 32 / n)
-    return int(max(24, min(160, raw)))
+    n = max(4, min(96, int(target_blocks)))
+    if n <= 12:
+        return 128
+    return int(max(32, min(128, round(128 - (n - 4) * 96 / 92))))
 
 
 # ---- 永続化 -----------------------------------------------------------

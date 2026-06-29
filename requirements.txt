@@ -16,3 +16,4 @@ plotly
 trimesh
 rtree>=1.0.0
 matplotlib
+nbtlib>=2.0.0

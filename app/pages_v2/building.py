@@ -20,6 +20,13 @@ from v2.mesh_architect import MeshArchitect
 from v2.palette_inference import infer_palette
 from v2.preview import create_3d_preview
 from v2.schem_deploy import SchemDeployError, deploy_schem, paste_via_rcon
+from v2.schem_glb_builder import build_schem_glb
+from v2.schem_preview import (
+    SchemPreviewError,
+    parse_schem_blocks,
+    schem_size_mismatch,
+    schem_summary,
+)
 from v2.texture_atlas import get_or_build_atlas_png
 from v2.voxel_glb_builder import build_voxel_glb
 from voxelizer.block_assigner import BlockAtlas
@@ -60,6 +67,140 @@ def _blocks_cache_key(blocks: List[Dict[str, Any]]) -> tuple:
     return tuple(sorted((int(b["x"]), int(b["y"]), int(b["z"]), b.get("type", "stone")) for b in blocks))
 
 
+@st.cache_data(show_spinner="schem を解析中...")
+def _load_schem_blocks_cached(schem_path: str, mtime: float) -> List[Dict[str, Any]]:
+    """``.schem`` を blocks 列に変換（ファイル mtime でキャッシュ無効化）。"""
+    del mtime  # cache key only
+    return parse_schem_blocks(schem_path)
+
+
+@st.cache_data(show_spinner=False)
+def _load_schem_summary_cached(schem_path: str, mtime: float) -> Dict[str, Any]:
+    del mtime
+    return schem_summary(schem_path)
+
+
+@st.cache_data(show_spinner=False)
+def _jar_textures_for_preview() -> dict:
+    """公式 jar PNG 辞書。未取得時は空 dict。"""
+    try:
+        from v2 import mc_assets
+
+        assets = mc_assets.ensure_official_assets()
+        if assets and assets.get("textures"):
+            return {k: str(v) for k, v in assets["textures"].items()}
+    except Exception:  # noqa: BLE001
+        pass
+    return {}
+
+
+@st.cache_data(show_spinner="schem プレビュー GLB 生成中...")
+def _build_schem_glb_cached(
+    schem_path: str,
+    mtime: float,
+    mc_version_tag: str,
+    blocks_key: tuple,
+    blocks_payload: list,
+) -> bytes:
+    del mtime, blocks_key
+    jar_raw = _jar_textures_for_preview()
+    from pathlib import Path as _Path
+
+    jar_textures = {k: _Path(v) for k, v in jar_raw.items()}
+    if not jar_textures:
+        atlas = _shared_block_atlas()
+        force = mc_version_tag == "procedural" and _mc_runtime.is_force_procedural()
+        png = get_or_build_atlas_png(atlas, force_procedural=force)
+        return build_voxel_glb(blocks_payload, atlas, png)
+    return build_schem_glb(blocks_payload, jar_textures, atlas=_shared_block_atlas())
+
+
+def _render_schem_meta_summary(
+    meta: Dict[str, Any],
+    summary: Dict[str, Any],
+    zone: Dict[str, Any],
+) -> None:
+    """schem メタデータ 1 行サマリー。"""
+    pos = zone.get("position") or {}
+    zw = int(pos.get("width") or meta.get("zone_width") or 0)
+    zd = int(pos.get("depth") or meta.get("zone_depth") or 0)
+    w, h, l = summary["width"], summary["height"], summary["length"]
+    bs = meta.get("stylize_block_size", "—")
+    tid = str(meta.get("tripo_task_id", ""))[:8]
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("ゾーン W×D", f"{zw}×{zd}" if zw and zd else "—")
+    c2.metric("schem W×D×H", f"{w}×{l}×{h}")
+    c3.metric("block_size", str(bs))
+    c4.metric("Tripo task", tid or "—")
+
+
+def _render_schem_preview(
+    schem_path: str,
+    zone: Dict[str, Any],
+    zone_id: int,
+    meta: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Tripo ``.schem`` 単体経路の 3D プレビュー（公式 jar テクスチャ GLB）。"""
+    try:
+        mtime = os.path.getmtime(schem_path)
+        summary = _load_schem_summary_cached(schem_path, mtime)
+        blocks = _load_schem_blocks_cached(schem_path, mtime)
+    except SchemPreviewError as e:
+        st.warning(f"schem プレビューを表示できません: {e}")
+        return
+
+    pos = zone.get("position") or {}
+    zw = int(pos.get("width") or 0)
+    zd = int(pos.get("depth") or 0)
+    mismatch = schem_size_mismatch(summary, zw, zd)
+    if mismatch:
+        st.error(mismatch, icon="📐")
+
+    w, h, l = summary["width"], summary["height"], summary["length"]
+    st.caption(
+        f"📐 schem: {w} × {l} × {h} (W×D×H) · **{summary['block_count']:,}** blocks · "
+        f"{summary['palette_size']} block types · {summary['file_size_kb']} KB"
+        + (f" ／ ゾーン: {zw}×{zd}" if zw and zd else "")
+    )
+    top = summary.get("top_blocks") or []
+    if top:
+        top_line = ", ".join(f"`{name.split(':')[-1]}`×{count:,}" for name, count in top[:8])
+        st.caption(f"主なブロック: {top_line}")
+
+    st.info(
+        "配置の正系は **WorldEdit の `.schem`** です。"
+        " 下は **公式 jar テクスチャ**（未登録ブロックは近似代用）の参考プレビュー。"
+        " 最終確認は Build から配置したワールド内（`localhost:28888`）。"
+        " 詳細: [TRIPO_MINECRAFT.md](docs/TRIPO_MINECRAFT.md) / [KNOWN_CHALLENGES.md](docs/KNOWN_CHALLENGES.md)",
+        icon="📦",
+    )
+
+    try:
+        key = _blocks_cache_key(blocks)
+        mc_tag = _mc_runtime.atlas_version_tag()
+        glb_bytes = _build_schem_glb_cached(
+            schem_path, mtime, mc_tag, key, blocks
+        )
+        jar_ok = bool(_jar_textures_for_preview())
+        tex_label = "公式 jar テクスチャ" if jar_ok else "手作りアトラス（jar 未取得）"
+        render_glb_bytes(
+            glb_bytes,
+            height=520,
+            auto_rotate=False,
+            exposure=1.35,
+            shadow_intensity=0.35,
+            alt=f"{zone.get('name', 'building')} schem preview",
+            caption=(
+                f"📦 {len(blocks):,} blocks · {tex_label} · "
+                f"近似代用あり — {len(glb_bytes) / 1024:,.1f} KB"
+            ),
+        )
+    except Exception as e:  # noqa: BLE001
+        st.warning(f"テクスチャ GLB に失敗したため Plotly にフォールバック: {e}")
+        fig = create_3d_preview(blocks, title=f"{zone.get('name', 'building')} (.schem)")
+        st.plotly_chart(fig, use_container_width=True)
+
+
 def _render_voxel_preview(
     blocks: List[Dict[str, Any]],
     zone: Dict[str, Any],
@@ -96,6 +237,55 @@ def _render_voxel_preview(
 
     fig = create_3d_preview(blocks, title=f"{zone['name']} (Voxel)")
     st.plotly_chart(fig, use_container_width=True)
+
+
+def _clear_design_artifacts(fm, zone_id: int) -> None:
+    """Design ステップの成果物（Concept / Structure / 修正案履歴）を削除する。
+
+    UI の「デザインをリセット」ボタンから呼ぶ。`design_images` セッション値も
+    ``None`` に戻し、`_section_design` を初回生成 UI に巻き戻す。
+    """
+    fixed = (
+        f"design_{zone_id}_decorated.jpg",
+        f"design_{zone_id}_structure.jpg",
+    )
+    for fn in fixed:
+        pth = fm.get_path(fn)
+        if os.path.isfile(pth):
+            try:
+                os.remove(pth)
+            except OSError:
+                pass
+    for pattern in (
+        f"design_{zone_id}_dec_*.jpg",
+        f"design_{zone_id}_feedback_*.txt",
+    ):
+        for pth in glob.glob(os.path.join(fm.project_dir, pattern)):
+            try:
+                os.remove(pth)
+            except OSError:
+                pass
+    st.session_state.design_images = None
+
+
+def _clear_amendment_history(fm, zone_id: int) -> int:
+    """修正案の中間ファイル（`design_<id>_dec_<ts>.jpg`, feedback テキスト）だけを消す。
+
+    canonical な `design_<id>_decorated.jpg` / `_structure.jpg` は残す。
+    削除件数を返す。
+    """
+    removed = 0
+    for pattern in (
+        f"design_{zone_id}_dec_*.jpg",
+        f"design_{zone_id}_feedback_*.txt",
+    ):
+        for pth in glob.glob(os.path.join(fm.project_dir, pattern)):
+            try:
+                os.remove(pth)
+                removed += 1
+            except OSError:
+                pass
+    return removed
 
 
 def _clear_blueprint_artifacts(fm, zone_id: int) -> None:
@@ -217,11 +407,45 @@ def _section_header(num: int, title: str, state: str, detail: str = "") -> None:
 
 # ---- Subsections ------------------------------------------------------
 
+def _generate_design_pair(
+    fm,
+    client,
+    zone_id: int,
+    prompt: str,
+    width: int,
+    depth: int,
+    concept_bytes: Optional[bytes],
+) -> bool:
+    """Concept → Structure を順に生成し、canonical な 2 ファイルに保存する。
+
+    成功時のみ ``True`` を返し、`st.session_state.design_images` を更新する。
+    呼び出し側は戻り値を見て toast / rerun を実行する。
+    """
+    with st.spinner("Concept (装飾あり) を生成中..."):
+        dec_bytes = client.generate_concept_image(prompt, width, depth, concept_bytes)
+    if not dec_bytes:
+        st.error("Concept 生成に失敗しました。")
+        return False
+    dec_path = fm.save_image(f"design_{zone_id}_decorated.jpg", dec_bytes)
+    st.session_state.design_images = {"decorated": dec_path, "structure": None}
+
+    with st.spinner("Structure（装飾を除いた構造）を生成中..."):
+        str_bytes = client.generate_structure_image(dec_bytes)
+    if not str_bytes:
+        st.error("Structure 生成に失敗しました。")
+        return False
+    str_path = fm.save_image(f"design_{zone_id}_structure.jpg", str_bytes)
+    st.session_state.design_images["structure"] = str_path
+    return True
+
+
 def _section_design(zone: dict) -> bool:
     """Returns True if design completed."""
     fm = st.session_state.file_manager
     client = st.session_state.gemini_client
     zone_id = zone["id"]
+    width = int(zone.get("position", {}).get("width", 10))
+    depth = int(zone.get("position", {}).get("depth", 10))
 
     if st.session_state.design_images is None:
         restored = _restore_design_images(fm, zone_id)
@@ -236,6 +460,25 @@ def _section_design(zone: dict) -> bool:
         "コンセプトを参照しつつ、AI が建物のリファレンス画像（装飾あり / 構造のみの 2 種）を生成します。"
         "構造画像はあとで Tripo3D に渡して 3D メッシュに変換します。"
     )
+    st.caption(
+        f"📐 ゾーンサイズ: **{width}×{depth} blocks**"
+        " — Tripo の解像度は Blueprint 作成時にこのサイズから自動設定されるため、"
+        "Design 再生成は画像の見た目を更新したいときだけで OK です。"
+    )
+
+    concept_image_path = (
+        (st.session_state.concept or {}).get("image_path")
+        if st.session_state.concept else None
+    )
+
+    def _load_concept_bytes() -> Optional[bytes]:
+        if not concept_image_path:
+            return None
+        try:
+            with open(concept_image_path, "rb") as f:
+                return f.read()
+        except OSError:
+            return None
 
     if not has_dec:
         prompt = st.text_area(
@@ -250,39 +493,17 @@ def _section_design(zone: dict) -> bool:
             disabled=not prompt.strip(),
         ):
             try:
-                concept_bytes: Optional[bytes] = None
-                if st.session_state.concept and st.session_state.concept.get("image_path"):
-                    try:
-                        with open(st.session_state.concept["image_path"], "rb") as f:
-                            concept_bytes = f.read()
-                    except Exception:
-                        concept_bytes = None
-
-                width = zone.get("position", {}).get("width", 10)
-                depth = zone.get("position", {}).get("depth", 10)
-
-                with st.spinner("Concept (装飾あり) を生成中..."):
-                    dec_bytes = client.generate_concept_image(prompt, width, depth, concept_bytes)
-                if not dec_bytes:
-                    st.error("Concept 生成に失敗しました。")
-                    return False
-                dec_path = fm.save_image(f"design_{zone_id}_decorated.jpg", dec_bytes)
-                st.session_state.design_images = {"decorated": dec_path, "structure": None}
-
-                with st.spinner("Structure（装飾を除いた構造）を生成中..."):
-                    str_bytes = client.generate_structure_image(dec_bytes)
-                if str_bytes:
-                    str_path = fm.save_image(f"design_{zone_id}_structure.jpg", str_bytes)
-                    st.session_state.design_images["structure"] = str_path
+                ok = _generate_design_pair(
+                    fm, client, zone_id, prompt, width, depth, _load_concept_bytes()
+                )
+                if ok:
                     st.toast("Design 完成！", icon="🖼️")
                     st.rerun()
-                else:
-                    st.error("Structure 生成に失敗しました。")
             except Exception as e:
                 st.error(f"Generation Error: {e}")
         return False
 
-    # 表示 + 修正
+    # 表示
     t1, t2 = st.tabs(["✨ Concept", "🏗️ Structure"])
     with t1:
         st.image(di["decorated"], use_container_width=True)
@@ -292,6 +513,71 @@ def _section_design(zone: dict) -> bool:
         else:
             st.info("Structure 画像を再生成してください。")
 
+    canonical_dec = fm.get_path(f"design_{zone_id}_decorated.jpg")
+    using_amendment = bool(
+        di and di.get("decorated") and os.path.abspath(di["decorated"]) != os.path.abspath(canonical_dec)
+    )
+    has_amendment_history = bool(
+        glob.glob(os.path.join(fm.project_dir, f"design_{zone_id}_dec_*.jpg"))
+        or glob.glob(os.path.join(fm.project_dir, f"design_{zone_id}_feedback_*.txt"))
+    )
+
+    # 再生成 / リセット
+    c_regen, c_reset = st.columns(2)
+    with c_regen:
+        regen_prompt = st.text_area(
+            "デザインプロンプト（再生成用）",
+            value=f"{zone.get('description', '')} architecture, detailed",
+            key=f"bnn_dgn_regen_prompt_{zone_id}",
+            height=80,
+            help="このプロンプトで Concept と Structure を作り直します。既存の Blueprint / schem は削除されます。",
+        )
+        if danger_button(
+            "🔄 デザインを再生成",
+            key=f"bnn_dgn_regen_{zone_id}",
+            confirm_title="デザインを再生成しますか？",
+            confirm_body=(
+                "Concept / Structure を作り直し、関連する Blueprint（`blocks_v2.json` / "
+                "`.schem` / Tripo タスクメタなど）も削除します。コンセプトアートは再使用されます。"
+            ),
+            confirm_label="再生成する",
+            disabled=not regen_prompt.strip(),
+            use_container_width=True,
+        ):
+            try:
+                ok = _generate_design_pair(
+                    fm, client, zone_id, regen_prompt, width, depth, _load_concept_bytes()
+                )
+                if ok:
+                    _clear_blueprint_artifacts(fm, zone_id)
+                    st.toast("デザインを再生成しました。", icon="🔄")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"再生成エラー: {e}")
+
+    with c_reset:
+        st.caption(
+            "デザインを最初からやり直したいときは、こちらで画像と修正履歴をまとめて削除できます。"
+        )
+        if danger_button(
+            "🗑️ デザインをリセット",
+            key=f"bnn_dgn_reset_{zone_id}",
+            confirm_title="デザインをリセットしますか？",
+            confirm_body=(
+                "Concept / Structure 画像と修正案履歴（`design_*_dec_*.jpg` / "
+                "`feedback_*.txt`）を削除し、関連 Blueprint も削除します。"
+                " 初回プロンプト UI に戻ります。"
+            ),
+            confirm_label="リセットする",
+            use_container_width=True,
+        ):
+            _clear_design_artifacts(fm, zone_id)
+            _clear_blueprint_artifacts(fm, zone_id)
+            st.session_state.pop(f"bnn_dgn_fix_{zone_id}", None)
+            st.session_state.pop(f"bnn_dgn_regen_prompt_{zone_id}", None)
+            st.toast("デザインをリセットしました。", icon="🧹")
+            st.rerun()
+
     with st.expander("デザインを修正する", expanded=False):
         prompt = st.text_area(
             "修正指示",
@@ -299,14 +585,27 @@ def _section_design(zone: dict) -> bool:
             key=f"bnn_dgn_fix_{zone_id}",
             height=80,
         )
-        if secondary_button(
-            "🪄 修正案を生成",
-            key=f"bnn_dgn_refix_{zone_id}",
-            disabled=not prompt.strip(),
-        ):
+        b_apply, b_reset = st.columns(2)
+        with b_apply:
+            do_apply = secondary_button(
+                "🪄 修正案を生成",
+                key=f"bnn_dgn_refix_{zone_id}",
+                disabled=not prompt.strip(),
+                use_container_width=True,
+            )
+        with b_reset:
+            do_reset = secondary_button(
+                "↩️ 修正案をリセット",
+                key=f"bnn_dgn_refix_reset_{zone_id}",
+                disabled=not (using_amendment or has_amendment_history),
+                use_container_width=True,
+                help="修正案の履歴を削除し、最初の Concept 画像に戻します。",
+            )
+
+        if do_apply:
             try:
                 prev_path = (st.session_state.design_images or {}).get("decorated")
-                prev_bytes = None
+                prev_bytes: Optional[bytes] = None
                 if prev_path and os.path.exists(prev_path):
                     with open(prev_path, "rb") as f:
                         prev_bytes = f.read()
@@ -318,8 +617,6 @@ def _section_design(zone: dict) -> bool:
                     "【重要】添付の参照画像は、前回生成したMinecraftボクセル建築の現状です。"
                     "形状・配色・世界観・ブロック単位の質感は維持しつつ、修正指示の方向に寄せてください。"
                 )
-                width = zone["position"]["width"]
-                depth = zone["position"]["depth"]
 
                 with st.spinner("Minecraft ボクセル建築を修正中..."):
                     new_dec = client.generate_concept_image(
@@ -332,10 +629,40 @@ def _section_design(zone: dict) -> bool:
                 fm.save_text(f"design_{zone_id}_feedback_{ts}.txt", prompt.strip())
                 p_path = fm.save_image(f"design_{zone_id}_dec_{ts}.jpg", new_dec)
                 st.session_state.design_images["decorated"] = p_path
-                st.toast("修正案を更新しました。", icon="🪄")
+
+                with st.spinner("Structure（装飾を除いた構造）を再生成中..."):
+                    str_bytes = client.generate_structure_image(new_dec)
+                if str_bytes:
+                    str_path = fm.save_image(f"design_{zone_id}_structure.jpg", str_bytes)
+                    st.session_state.design_images["structure"] = str_path
+                    _clear_blueprint_artifacts(fm, zone_id)
+                    st.toast("修正案を反映し Structure も更新しました。", icon="🪄")
+                else:
+                    st.warning(
+                        "Structure 再生成に失敗しました。Concept は更新されています。"
+                        " Blueprint を作成する前にもう一度修正案を生成するか、デザインを再生成してください。",
+                        icon="⚠️",
+                    )
                 st.rerun()
             except Exception as e:
                 st.error(f"修正に失敗: {e}")
+
+        if do_reset:
+            removed = _clear_amendment_history(fm, zone_id)
+            if os.path.isfile(canonical_dec):
+                st.session_state.design_images["decorated"] = canonical_dec
+                st.session_state.pop(f"bnn_dgn_fix_{zone_id}", None)
+                st.toast(
+                    f"修正案をリセットしました（{removed} ファイル削除）。",
+                    icon="↩️",
+                )
+                st.rerun()
+            else:
+                st.warning(
+                    "canonical な `decorated.jpg` が見つかりません。"
+                    " デザインを再生成またはリセットしてください。",
+                    icon="⚠️",
+                )
 
     return has_str
 
@@ -365,16 +692,32 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
             "Tripo の `.schem` を取得済みです。WorldEdit + RCON でワールドに配置できます。",
             icon="📦",
         )
+
+        meta = fm.load_json(f"building_{zone_id}_schem_meta.json") or {}
+        schem_path = fm.get_path(schem_file)
+        summary_for_meta: Dict[str, Any] = {}
+        try:
+            mtime_m = os.path.getmtime(schem_path)
+            summary_for_meta = _load_schem_summary_cached(schem_path, mtime_m)
+        except SchemPreviewError:
+            pass
+
+        with st.expander("schem メタデータ", expanded=True):
+            if meta:
+                _render_schem_meta_summary(meta, summary_for_meta, zone)
+                st.json(meta, expanded=True)
+            else:
+                st.caption("メタデータファイルがありません。")
+
+        with st.expander("3D Preview (.schem)", expanded=True):
+            _render_schem_preview(schem_path, zone, zone_id, meta=meta)
+
         st.caption(
-            "プレビューはワールド内（`localhost:28888`）で確認します。"
+            "最終確認は Build セクションから WorldEdit で配置した"
+            " ワールド内（`localhost:28888`）で行ってください。"
             " 別のシード／プロンプトで取り直したい、あるいは GLB ボクセル経路も生成したい場合は"
             " 下のボタンから再生成してください。"
         )
-
-        meta = fm.load_json(f"building_{zone_id}_schem_meta.json") or {}
-        if meta:
-            with st.expander("schem メタデータ", expanded=False):
-                st.json(meta, expanded=False)
 
         c1, c2 = st.columns(2)
         with c1:
@@ -419,11 +762,19 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
                 ["🧊 Voxel (Minecraft)", "🗿 Original Mesh (Tripo3D)"]
             )
             with tab_vox:
+                if has_schem:
+                    st.info(
+                        "配置の正系は **`.schem` (WorldEdit)** です。"
+                        " この Voxel プレビューは GLB 再ボクセル化の参考表示であり、"
+                        " 最終的な見た目は Build セクションから WorldEdit で配置した"
+                        " ワールド内で確認してください。",
+                        icon="📦",
+                    )
                 _render_voxel_preview(blocks, zone, zone_id)
             with tab_glb:
                 glb_path = find_glb_in_dir(fm.project_dir, zone_id)
                 if glb_path:
-                    render_glb(glb_path, height=520)
+                    render_glb(glb_path, height=520, auto_rotate=False)
                 else:
                     st.info(
                         "GLB ファイルが見つかりません。ブループリントを再生成すると "
@@ -656,11 +1007,29 @@ def _section_build(zone: dict, blueprint_done: bool, log_key: str) -> bool:
                 # WorldEdit のレスポンスに `§c` (赤色エラー) があれば検知して警告。
                 # `//world` 設定ミス・schem 未配置などをユーザーに分かりやすく伝える。
                 joined = " ".join(str(l) for l in (log or []))
-                if "§c" in joined or "Incorrect argument" in joined or "You need to provide a world" in joined:
+                error_markers = (
+                    "Incorrect argument",
+                    "You need to provide a world",
+                    "Your clipboard is empty",
+                    "Invalid value for",
+                )
+                has_error = any(m in joined for m in error_markers)
+                if "§c" in joined and not has_error:
+                    # WorldEdit は警告（例: Position already set）にも §c を使う
+                    has_error = "Position already set" not in joined
+                if has_error:
+                    hint = (
+                        " ワールド名が `world` でない、もしくは schem が schematics ディレクトリに配置されていない可能性があります。"
+                    )
+                    if "Invalid value for" in joined and "schematic filename" in joined:
+                        hint = (
+                            " `//schem load` には拡張子付きファイル名（例: `building_15.schem`）が必要です。"
+                            " アプリを最新版に更新してから再試行してください。"
+                        )
                     st.warning(
                         "WorldEdit からエラーレスポンスが返っています。"
-                        " ワールド名が `world` でない、もしくは schem が schematics ディレクトリに配置されていない可能性があります。"
-                        " `.env` の `BANANACRAFT_MC_WORLD` を実際のワールド名に合わせるか、"
+                        + hint
+                        + " `.env` の `BANANACRAFT_MC_WORLD` を実際のワールド名に合わせるか、"
                         " `make logs-mc` でサーバー側ログを確認してください。",
                         icon="⚠️",
                     )

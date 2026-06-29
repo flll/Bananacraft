@@ -153,7 +153,9 @@ def build_voxel_glb(
         block_type = b.get("type", "stone")
         entry = _resolve_block_atlas_entry(atlas, block_type)
         if entry is None:
-            continue  # unknown ブロックはスキップ
+            entry = _resolve_block_atlas_entry(atlas, "minecraft:stone")
+        if entry is None:
+            continue  # アトラス自体が壊れている場合のみスキップ
 
         for face_name, quad_idx, neighbor in _FACES:
             if cull_hidden_faces:
