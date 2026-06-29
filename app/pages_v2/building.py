@@ -684,6 +684,39 @@ def _section_design(zone: dict) -> bool:
     return has_str
 
 
+def _render_tripo_cost_hint() -> None:
+    """Higgsfield Supercomputer 相当: Generate 前のコスト目安。"""
+    st.caption(
+        "**推定消費（Tripo クレジット）**: `image_to_model` 1 回"
+        " + `stylize(minecraft)` 1 回。"
+        " Texture Model ON 時は追加。"
+        " 残高は [Tripo ダッシュボード](https://platform.tripo3d.ai/) で確認してください。"
+    )
+
+
+def _render_generation_archive(fm, zone_id: int) -> None:
+    """Higgsfield Generation Archive 相当: プロジェクト内 schem 一覧。"""
+    with st.expander("📚 Generation Archive（このプロジェクトの .schem）", expanded=False):
+        pattern = os.path.join(fm.project_dir, "building_*.schem")
+        files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+        if not files:
+            st.caption("まだ `building_*.schem` がありません。")
+            return
+        for fpath in files[:15]:
+            name = os.path.basename(fpath)
+            try:
+                s = schem_summary(fpath)
+                label = (
+                    f"**{name}** — {s['width']}×{s['length']}×{s['height']} · "
+                    f"{s['block_count']:,} blocks · {s['file_size_kb']} KB"
+                )
+            except SchemPreviewError:
+                label = f"**{name}** — 解析不可"
+            if name == f"building_{zone_id}.schem":
+                label += " ← **現在のゾーン**"
+            st.markdown(label)
+
+
 def _render_dropin_import(zone: dict, fm) -> None:
     """Bloxelizer 相当: schem / 画像 / GLB のドロップイン取り込み。"""
     zone_id = zone["id"]
@@ -796,6 +829,7 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
     )
 
     _render_dropin_import(zone, fm)
+    _render_generation_archive(fm, zone_id)
 
     if not design_done:
         st.info("先に Design ステップを完了してください。", icon="🔒")
@@ -934,6 +968,8 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
             "TRIPO_API_KEY が未設定です。Settings ページから登録するか、`.env` を編集してください。",
             icon="🔑",
         )
+
+    _render_tripo_cost_hint()
 
     if primary_button(
         "🏗️ ブループリントを作成 (Tripo + Voxel + Semantic)",

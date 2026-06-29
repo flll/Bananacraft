@@ -34,8 +34,9 @@ North Star 概要: [NORTH_STAR.md](./NORTH_STAR.md)
 | Camera 参照画像 | concept + dropin 画像 | Partial |
 | Supercomputer 出力スロット UX | PipelineStatus | Partial |
 | Generation Archive | `projects/` ファイル | Partial |
-| Generate 前コスト表示 | — | Missing |
+| Generate 前コスト表示 | 静的目安 + Tripo リンク | Partial |
 | ブロック逐次 materialize | Mineflayer | Have |
+| Generation Archive | プロジェクト schem 一覧 | Partial |
 | ゲーム内 Mod (NeoForge) | Streamlit tailnet | Missing (意図) |
 | `/higgsfield auth` 型認証 | API キー UI | 別方式 |
 
