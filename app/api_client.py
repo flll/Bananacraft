@@ -113,7 +113,12 @@ class GeminiClient:
             return None
 
     def generate_concept_image(
-        self, base_description: str, width: int, depth: int, concept_image_bytes: bytes = None
+        self,
+        base_description: str,
+        width: int,
+        depth: int,
+        concept_image_bytes: bytes = None,
+        camera_reference_bytes: bytes = None,
     ):
         height_hint = max(6, round(max(int(width), int(depth)) * 0.7))
         longest = max(int(width), int(depth))
@@ -153,8 +158,21 @@ class GeminiClient:
             f"【参照画像について】\n"
             f"添付のコンセプトアート（街の全景）の世界観・配色・雰囲気を継承してください。"
         )
+        if camera_reference_bytes:
+            prompt += (
+                "\n\n【Camera 参照画像について】\n"
+                "2 枚目の参照はカメラアングル・構図・建物スタイルの固定用です。"
+                "視点・プロポーション・雰囲気を優先的に合わせてください。"
+            )
         print(f"--- Generating Decorated Image (Concept) ---\nPrompt: {prompt[:200]}...")
-        return self.generate_image(prompt, reference_image_bytes=concept_image_bytes)
+        extras = []
+        if camera_reference_bytes:
+            extras.append((camera_reference_bytes, "image/jpeg"))
+        return generate_image_bytes(
+            prompt,
+            reference_image_bytes=concept_image_bytes,
+            extra_reference_images=extras or None,
+        )
 
     def generate_structure_image(self, decorated_image_bytes: bytes):
         if not decorated_image_bytes:

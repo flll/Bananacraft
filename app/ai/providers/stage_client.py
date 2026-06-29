@@ -332,6 +332,7 @@ def generate_image_bytes(
     prompt: str,
     reference_image_bytes: Optional[bytes] = None,
     reference_mime: str = "image/jpeg",
+    extra_reference_images: Optional[list[tuple[bytes, str]]] = None,
 ) -> Optional[bytes]:
     """画像工程は常に Gemini（参照画像 i2i）。"""
     stage = AIStage.IMAGE_RENDER
@@ -345,6 +346,8 @@ def generate_image_bytes(
     contents: List[Any] = [prompt]
     if reference_image_bytes:
         contents.append(types.Part.from_bytes(data=reference_image_bytes, mime_type=reference_mime))
+    for data, mime in extra_reference_images or []:
+        contents.append(types.Part.from_bytes(data=data, mime_type=mime))
     resp = client.models.generate_content(model=model, contents=contents)
     if resp.candidates and resp.candidates[0].content.parts:
         for part in resp.candidates[0].content.parts:

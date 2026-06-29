@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import glob
 import os
+import shutil
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
@@ -26,6 +27,11 @@ from v2.schem_preview import (
     parse_schem_blocks,
     schem_size_mismatch,
     schem_summary,
+)
+from v2.schem_resize import (
+    auto_resize_schem_file,
+    footprint_mismatch_ratio,
+    replace_block_type_in_schem,
 )
 from v2.schem_writer import assigned_blocks_to_dicts, write_schem_from_blocks
 from v2.texture_atlas import get_or_build_atlas_png
@@ -144,6 +150,7 @@ def _render_schem_preview(
     zone: Dict[str, Any],
     zone_id: int,
     meta: Optional[Dict[str, Any]] = None,
+    fm=None,
 ) -> None:
     """Tripo ``.schem`` 単体経路の 3D プレビュー（公式 jar テクスチャ GLB）。"""
     try:
@@ -217,6 +224,152 @@ def _render_schem_preview(
         fig = create_3d_preview(blocks, title=f"{zone.get('name', 'building')} (.schem)")
         st.plotly_chart(fig, use_container_width=True)
 
+    if fm is not None:
+        _render_schem_edit_tools(schem_path, zone, zone_id, fm)
+
+
+def _load_camera_reference_bytes(fm, zone_id: int) -> Optional[bytes]:
+    name = f"design_{zone_id}_camera_reference.jpg"
+    if not fm.exists(name):
+        return None
+    try:
+        with open(fm.get_path(name), "rb") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def _schem_blocks_to_bot_instructions(
+    blocks: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """schem 相対座標 → Mineflayer setblock 命令（origin は run_bot 側で加算）。"""
+    out: List[Dict[str, Any]] = []
+    for b in blocks:
+        t = str(b.get("type") or "minecraft:stone")
+        if "leaves" in t and "persistent=true" not in t:
+            t = t.replace("]", ",persistent=true]") if "[" in t else f"{t}[persistent=true]"
+        out.append(
+            {
+                "x": int(b["x"]),
+                "y": int(b["y"]),
+                "z": int(b["z"]),
+                "action": "setblock",
+                "block": t,
+            }
+        )
+    return out
+
+
+def _render_schem_edit_tools(
+    schem_path: str,
+    zone: Dict[str, Any],
+    zone_id: int,
+    fm,
+) -> None:
+    """リサイズ・find-replace・litematic export（Bloxelizer parity）。"""
+    pos = zone.get("position") or {}
+    zw = int(pos.get("width") or 0)
+    zd = int(pos.get("depth") or 0)
+    schem_name = f"building_{zone_id}.schem"
+
+    with st.expander("✏️ schem 編集ツール", expanded=False):
+        st.caption(
+            "Bloxelizer 相当: ゾーンへのリサイズ、ブロック種置換、`.litematic` 書き出し"
+        )
+        c1, c2 = st.columns(2)
+        with c1:
+            if secondary_button(
+                "📐 ゾーン最長辺にリサイズ",
+                key=f"bnn_schem_resize_{zone_id}",
+            ):
+                if zw and zd:
+                    if auto_resize_schem_file(schem_path, zw, zd):
+                        st.toast("リサイズしました", icon="📐")
+                        _load_schem_blocks_cached.clear()
+                        _load_schem_summary_cached.clear()
+                        st.rerun()
+                    else:
+                        st.info("リサイズ不要（1.5x 以内）または対象なし")
+                else:
+                    st.warning("ゾーンサイズが未設定です")
+        with c2:
+            if zw and zd:
+                ratio = footprint_mismatch_ratio(schem_path, zw, zd)
+                st.metric("schem/ゾーン 比率", f"{ratio:.2f}×")
+            else:
+                st.caption("ゾーンサイズ未設定")
+
+        fr1, fr2, fr3 = st.columns([2, 2, 1])
+        with fr1:
+            from_block = st.text_input(
+                "置換元 block id",
+                value="minecraft:oak_planks",
+                key=f"bnn_fr_from_{zone_id}",
+            )
+        with fr2:
+            to_block = st.text_input(
+                "置換先 block id",
+                value="minecraft:spruce_planks",
+                key=f"bnn_fr_to_{zone_id}",
+            )
+        with fr3:
+            st.write("")
+            if secondary_button("🎨 置換", key=f"bnn_fr_apply_{zone_id}"):
+                try:
+                    n = replace_block_type_in_schem(schem_path, from_block, to_block)
+                    st.toast(f"{n} ブロックを置換しました", icon="🎨")
+                    _load_schem_blocks_cached.clear()
+                    _load_schem_summary_cached.clear()
+                    st.rerun()
+                except SchemPreviewError as e:
+                    st.error(str(e))
+
+        litematic_name = schem_name.replace(".schem", ".litematic")
+        if secondary_button(
+            "📤 .litematic を書き出し",
+            key=f"bnn_litematic_{zone_id}",
+        ):
+            try:
+                from v2.schem_litematic import export_litematic_from_schem
+
+                out = export_litematic_from_schem(schem_path, fm.get_path(litematic_name))
+                st.success(f"`{os.path.basename(out)}` をプロジェクトに保存しました", icon="📤")
+            except SchemPreviewError as e:
+                st.warning(str(e))
+
+
+def _render_camera_reference_slot(fm, zone_id: int) -> None:
+    """Higgsfield Camera 参照スロット。"""
+    cam_name = f"design_{zone_id}_camera_reference.jpg"
+    with st.expander("📷 Camera 参照画像（Higgsfield 相当）", expanded=False):
+        st.caption(
+            "建物のカメラアングル・スタイルを固定したいときに参照画像を追加します。"
+            " Concept 生成時に街のコンセプトアートと併せて Gemini に渡されます。"
+        )
+        if fm.exists(cam_name):
+            st.image(fm.get_path(cam_name), use_container_width=True)
+            if danger_button(
+                "🗑️ 参照画像を削除",
+                key=f"bnn_cam_del_{zone_id}",
+                confirm_title="Camera 参照を削除しますか？",
+                confirm_body="次回の Concept 生成から参照されなくなります。",
+                confirm_label="削除する",
+            ):
+                try:
+                    os.remove(fm.get_path(cam_name))
+                except OSError:
+                    pass
+                st.rerun()
+        uploaded = st.file_uploader(
+            "参照画像（PNG/JPEG）",
+            type=["png", "jpg", "jpeg"],
+            key=f"bnn_cam_upload_{zone_id}",
+        )
+        if uploaded:
+            fm.save_image(cam_name, uploaded.getvalue())
+            st.toast("Camera 参照を保存しました", icon="📷")
+            st.rerun()
+
 
 def _render_voxel_preview(
     blocks: List[Dict[str, Any]],
@@ -265,6 +418,7 @@ def _clear_design_artifacts(fm, zone_id: int) -> None:
     fixed = (
         f"design_{zone_id}_decorated.jpg",
         f"design_{zone_id}_structure.jpg",
+        f"design_{zone_id}_camera_reference.jpg",
     )
     for fn in fixed:
         pth = fm.get_path(fn)
@@ -432,6 +586,7 @@ def _generate_design_pair(
     width: int,
     depth: int,
     concept_bytes: Optional[bytes],
+    camera_bytes: Optional[bytes] = None,
 ) -> bool:
     """Concept → Structure を順に生成し、canonical な 2 ファイルに保存する。
 
@@ -439,7 +594,9 @@ def _generate_design_pair(
     呼び出し側は戻り値を見て toast / rerun を実行する。
     """
     with st.spinner("Concept (装飾あり) を生成中..."):
-        dec_bytes = client.generate_concept_image(prompt, width, depth, concept_bytes)
+        dec_bytes = client.generate_concept_image(
+            prompt, width, depth, concept_bytes, camera_reference_bytes=camera_bytes
+        )
     if not dec_bytes:
         st.error("Concept 生成に失敗しました。")
         return False
@@ -483,6 +640,9 @@ def _section_design(zone: dict) -> bool:
         "Design 再生成は画像の見た目を更新したいときだけで OK です。"
     )
 
+    _render_camera_reference_slot(fm, zone_id)
+    camera_bytes = _load_camera_reference_bytes(fm, zone_id)
+
     concept_image_path = (
         (st.session_state.concept or {}).get("image_path")
         if st.session_state.concept else None
@@ -511,7 +671,8 @@ def _section_design(zone: dict) -> bool:
         ):
             try:
                 ok = _generate_design_pair(
-                    fm, client, zone_id, prompt, width, depth, _load_concept_bytes()
+                    fm, client, zone_id, prompt, width, depth,
+                    _load_concept_bytes(), camera_bytes,
                 )
                 if ok:
                     st.toast("Design 完成！", icon="🖼️")
@@ -563,7 +724,8 @@ def _section_design(zone: dict) -> bool:
         ):
             try:
                 ok = _generate_design_pair(
-                    fm, client, zone_id, regen_prompt, width, depth, _load_concept_bytes()
+                    fm, client, zone_id, regen_prompt, width, depth,
+                    _load_concept_bytes(), camera_bytes,
                 )
                 if ok:
                     _clear_blueprint_artifacts(fm, zone_id)
@@ -694,8 +856,14 @@ def _render_tripo_cost_hint() -> None:
     )
 
 
-def _render_generation_archive(fm, zone_id: int) -> None:
+def _render_generation_archive(fm, zone: dict, log_key: str) -> None:
     """Higgsfield Generation Archive 相当: プロジェクト内 schem 一覧。"""
+    zone_id = zone["id"]
+    current_name = f"building_{zone_id}.schem"
+    current_path = fm.get_path(current_name)
+    build_origin = _build_origin_for(zone)
+    schematic_name = f"building_{zone_id}"
+
     with st.expander("📚 Generation Archive（このプロジェクトの .schem）", expanded=False):
         pattern = os.path.join(fm.project_dir, "building_*.schem")
         files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
@@ -704,6 +872,7 @@ def _render_generation_archive(fm, zone_id: int) -> None:
             return
         for fpath in files[:15]:
             name = os.path.basename(fpath)
+            safe_key = name.replace(".", "_")
             try:
                 s = schem_summary(fpath)
                 label = (
@@ -712,9 +881,49 @@ def _render_generation_archive(fm, zone_id: int) -> None:
                 )
             except SchemPreviewError:
                 label = f"**{name}** — 解析不可"
-            if name == f"building_{zone_id}.schem":
+            if name == current_name:
                 label += " ← **現在のゾーン**"
-            st.markdown(label)
+            c_info, c_apply, c_paste = st.columns([3, 1, 1])
+            with c_info:
+                st.markdown(label)
+            with c_apply:
+                if secondary_button(
+                    "ゾーンに適用",
+                    key=f"bnn_arch_apply_{zone_id}_{safe_key}",
+                    disabled=name == current_name,
+                    use_container_width=True,
+                ):
+                    shutil.copy2(fpath, current_path)
+                    fm.save_json(
+                        f"building_{zone_id}_schem_meta.json",
+                        {
+                            "source": "generation_archive",
+                            "archived_from": name,
+                        },
+                    )
+                    st.toast(f"`{name}` を現在ゾーンに適用しました", icon="📚")
+                    st.rerun()
+            with c_paste:
+                if secondary_button(
+                    "再配置",
+                    key=f"bnn_arch_paste_{zone_id}_{safe_key}",
+                    use_container_width=True,
+                ):
+                    try:
+                        if name != current_name:
+                            shutil.copy2(fpath, current_path)
+                        with st.spinner(f"WorldEdit で {name} を配置中..."):
+                            dst = deploy_schem(current_path, schematic_name)
+                            log = paste_via_rcon(schematic_name, build_origin)
+                        st.session_state[log_key] = log
+                        st.toast(f"WorldEdit で配置: {dst.name}", icon="📦")
+                        st.rerun()
+                    except SchemDeployError as e:
+                        st.error(f"Schem deploy failed: {e}")
+                    except ConnectionError as e:
+                        st.error(f"Minecraft サーバーに接続できません: {e}")
+                    except Exception as e:  # noqa: BLE001
+                        st.error(f"WorldEdit Paste Failed: {e}")
 
 
 def _render_dropin_import(zone: dict, fm) -> None:
@@ -829,7 +1038,7 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
     )
 
     _render_dropin_import(zone, fm)
-    _render_generation_archive(fm, zone_id)
+    _render_generation_archive(fm, zone, f"_bnn_build_log_{zone_id}")
 
     if not design_done:
         st.info("先に Design ステップを完了してください。", icon="🔒")
@@ -861,7 +1070,7 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
                 st.caption("メタデータファイルがありません。")
 
         with st.expander("3D Preview (.schem)", expanded=True):
-            _render_schem_preview(schem_path, zone, zone_id, meta=meta)
+            _render_schem_preview(schem_path, zone, zone_id, meta=meta, fm=fm)
 
         st.caption(
             "最終確認は Build セクションから WorldEdit で配置した"
@@ -1198,6 +1407,50 @@ def _section_build(zone: dict, blueprint_done: bool, log_key: str) -> bool:
                 )
             except Exception as e:
                 st.error(f"WorldEdit Paste Failed: {e}")
+
+        st.caption("--- Mineflayer 逐次設置（Higgsfield materialize 相当）---")
+        st.caption(
+            "WorldEdit の一括 paste の代わりに、AI Carpenter Bot が 1 ブロックずつ設置します。"
+            " 大きい schem では時間がかかります。"
+        )
+        if primary_button(
+            "👷 Mineflayer で逐次設置 (.schem)",
+            key=f"bnn_build_mineflayer_{zone_id}",
+            use_container_width=True,
+        ):
+            try:
+                with PipelineStatus("Mineflayer Bot が schem を設置中…", expanded=True) as p:
+                    p.step("① schem を解析")
+                    local_schem = fm.get_path(schem_file)
+                    blocks = parse_schem_blocks(local_schem, skip_air=True)
+                    if not blocks:
+                        st.error("設置するブロックがありません。")
+                        return False
+                    p.write(f"{len(blocks):,} blocks")
+
+                    p.step("② Bot 用命令に変換")
+                    bot_instructions = _schem_blocks_to_bot_instructions(blocks)
+                    bot_target = f"bot_instructions_schem_{zone_id}.json"
+                    fm.save_json(bot_target, {"instructions": bot_instructions})
+
+                    p.step(
+                        "③ Mineflayer Bot を起動",
+                        "Carpenter Bot が Minecraft に参加して設置中…",
+                    )
+                    cs = CarpenterSession()
+                    result_log = cs.run_bot(
+                        project_name=st.session_state.project_name,
+                        target_file=bot_target,
+                        origin=build_origin,
+                    )
+                    p.done(f"完了：{len(bot_instructions):,} ブロックを設置しました")
+                st.session_state[log_key] = result_log
+                st.toast("Mineflayer 設置が完了しました", icon="👷")
+                st.rerun()
+            except FileNotFoundError as e:
+                st.error(f"Bot が見つかりません: {e}")
+            except Exception as e:  # noqa: BLE001
+                st.error(f"Mineflayer Build Failed: {e}")
 
     if has_blocks and has_schem:
         st.caption("--- 従来の RCON ボクセル経路（フォールバック）---")

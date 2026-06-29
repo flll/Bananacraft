@@ -1,6 +1,6 @@
 # Bananacraft ロードマップ
 
-North Star: [NORTH_STAR.md](./NORTH_STAR.md) | ベンチマーク: [COMPETITOR_BENCHMARK.md](./COMPETITOR_BENCHMARK.md)
+North Star: [NORTH_STAR.md](./NORTH_STAR.md) | ベンチマーク: [COMPETITOR_BENCHMARK.md](./COMPETITOR_BENCHMARK.md) | 履歴: [IMPLEMENTATION_HISTORY.md](./IMPLEMENTATION_HISTORY.md)
 
 ---
 
@@ -13,7 +13,7 @@ North Star: [NORTH_STAR.md](./NORTH_STAR.md) | ベンチマーク: [COMPETITOR_B
 
 ---
 
-## Phase 1 — Bloxelizer parity（変換・編集）— 2026-06 一部完了
+## Phase 1 — Bloxelizer parity（変換・編集）— 2026-06 完了
 
 **目標:** ブラウザ内で変換・プレビュー・配置まで 1 フロー。
 
@@ -22,52 +22,55 @@ North Star: [NORTH_STAR.md](./NORTH_STAR.md) | ベンチマーク: [COMPETITOR_B
 | schem プレビュー強化（Y レイヤスライス、ゾーン警告） | 完了 |
 | GLB/PNG/schem ドロップイン import | 完了 |
 | GLB → ボクセル → `.schem`（Path B、Size=ゾーン最長辺） | 完了 |
-| `.litematic` export | 未着手（調査のみ） |
+| `.litematic` export | 完了（要 litemapy、[LITEMATIC_EXPORT.md](./LITEMATIC_EXPORT.md)） |
+| schem ブロック種 find-replace | 完了（`schem_resize.py`） |
+| 手動リサイズ UI | 完了 |
 
 **成功条件（Karpathy §4）:**
 
-- サンプル GLB → UI schem 化 → プレビュー → RCON paste（Build セクションから paste）
-- ゾーンサイズ誤差 **1.5x 以内** — Path B は Size 制御あり。Tripo Path A は警告表示まで
+- サンプル GLB → UI schem 化 → プレビュー → RCON paste（Build セクションから paste）— **達成**
+- ゾーンサイズ誤差 **1.5x 以内** — Path B / 手動・自動リサイズで **緩和**。Tripo Path A 単体は警告 + 自動リサイズ試行
 
 ---
 
-## Phase 2 — Higgsfield parity（生成 UX）
+## Phase 2 — Higgsfield parity（生成 UX）— 2026-06 完了
 
 **目標:** 参照画像 + プロンプト → 生成 → ゾーン内配置、Archive から再配置。
 
-| タスク | 関連コード |
+| タスク | 状態 |
 |--------|------------|
-| 参照画像スロット（Camera 相当） | `app/api_client.py`, `building.py` |
-| Generation Archive UI | `app/file_manager.py`, 新 UI |
-| Generate 前 Tripo クレジット見積もり | `app/tripo_client.py`, UI |
-| Mineflayer 逐次設置オプション既定化 | `AI_Carpenter_Bot/` |
+| 参照画像スロット（Camera 相当） | 完了 — `design_*_camera_reference.jpg` |
+| Generation Archive UI（適用・再配置） | 完了 |
+| Generate 前 Tripo クレジット見積もり | 完了 |
+| Mineflayer 逐次設置（schem 本体） | 完了 — Build 節 |
 
 **成功条件:**
 
-- 参照画像 1 枚 + プロンプト → paste 成功
-- Archive から過去生成を再配置可能
+- 参照画像 1 枚 + プロンプト → paste 成功 — **Camera + Concept 二重参照で改善**
+- Archive から過去生成を再配置可能 — **達成**
 
 ---
 
-## Phase 3 — サイズ制御（ObjToSchematic 融合）
+## Phase 3 — サイズ制御（ObjToSchematic 融合）— 2026-06 緩和完了
 
 **目標:** [KNOWN_CHALLENGES.md](./KNOWN_CHALLENGES.md) #1 解消。
 
-| タスク | 関連コード |
-|--------|------------|
-| Path B ローカル化（GLB → schem + Size） | `mesh_architect.py`, `voxel_glb_builder.py` |
-| または schem bbox リサイズ | 新規ユーティリティ |
-| `stylize_block_for_target` をフォールバック化 | `tripo_config.py` |
+| タスク | 状態 |
+|--------|------|
+| Path B ローカル化（GLB → schem + Size） | 完了 |
+| schem bbox リサイズ | 完了 — `schem_resize.auto_resize_schem_file` |
+| Tripo 後自動リサイズ | 完了 — `mesh_architect.py` |
+| `stylize_block_for_target` をフォールバック化 | 既存（完全解決ではない） |
 
 **成功条件:**
 
-- 12×12 ゾーン → schem W×D が 1.5x 以内（自動、手動調整不要）
+- 12×12 ゾーン → schem W×D が 1.5x 以内 — **自動リサイズ + 手動ボタンで緩和**（Tripo 単体は未保証）
 
 ---
 
 ## Phase 4 — オプション: ゲーム内ブリッジ
 
-**前提:** Phase 2 完了後にアーキテクチャ判断。
+**ステータス:** 文書化のみ → [PHASE4_MOD_BRIDGE.md](./PHASE4_MOD_BRIDGE.md)
 
 - NeoForge 薄い Mod または RCON トリガ（Supercomputer メタファのみ）
 - Streamlit tailnet は維持

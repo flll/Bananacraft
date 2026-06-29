@@ -324,6 +324,17 @@ class MeshArchitect:
                                 self.fm.project_dir,
                                 f"building_{zone_id}",
                             )
+                            try:
+                                from v2.schem_resize import auto_resize_schem_file
+
+                                if auto_resize_schem_file(schem_path, width, depth):
+                                    trip_meta["schem_auto_resized"] = True
+                                    _p(
+                                        "②.4b schem をゾーン最長辺にリサイズ",
+                                        f"target={max(width, depth)} blocks",
+                                    )
+                            except Exception as resize_err:  # noqa: BLE001
+                                trip_meta["schem_resize_error"] = str(resize_err)
                             trip_meta["schem_url"] = schem_url
                             trip_meta["schem_path"] = schem_path
                             schem_meta = {

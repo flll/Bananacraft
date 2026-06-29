@@ -33,9 +33,11 @@
 ### 正しい方向性
 
 1. nanobanana → **二重変換を避ける**（§2）
-2. schem bbox リサイズ（未実装）
-3. Path B ローカル化（Tripo GLB + `target_voxel`）
+2. schem bbox リサイズ — **実装済み** `app/v2/schem_resize.py`（Tripo 後自動 + UI 手動）
+3. Path B ローカル化（Tripo GLB + `target_voxel`）— **実装済み**
 4. `auto_size` / `align_image`（ゾーン連動 ON 時に試行）
+
+**2026-06-04:** Phase 3 バッチで `auto_resize_schem_file` を `mesh_architect` と Blueprint UI に接続。完全自動は Tripo Size API 不在のため **1.5x 以内を目標とした緩和**。
 
 ---
 
