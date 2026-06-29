@@ -2,6 +2,12 @@
 
 本書はコードベース上の責務分担・データの流れ・改修時の着手点をまとめたものです。背景やプロダクト思想は [Zenn: Bananacraft の記事](https://zenn.dev/nakaniship/articles/9f6eb4b7f8a44e) を参照してください（本書はその「実装マップ」役）。
 
+> **Tripo / Minecraft ノウハウ**  
+> [TRIPO_MINECRAFT.md](./TRIPO_MINECRAFT.md) — Path A/B 比較、block_size、トラブルシュート。
+
+> **既知の課題（最優先: ゾーンと schem のサイズ不一致）**  
+> [KNOWN_CHALLENGES.md](./KNOWN_CHALLENGES.md) — Agent / 開発者は Tripo・Blueprint 改修前に必読。
+
 ---
 
 ## 目次
@@ -355,13 +361,13 @@ flowchart LR
 - コマンド列（Purpur 26.1.2 + WorldEdit 7 想定、コンソール RCON 実行）:
 
 ```
-gamerule sendCommandFeedback false
 //world <overworld 名>
 //pos1 <ox> <oy> <oz>
-//schem load <name>
+//schem load <name>.schem
 //paste -a
-gamerule sendCommandFeedback true
 ```
+
+WorldEdit 7 では ``//schem load`` に **拡張子付きファイル名**（例: ``building_15.schem``）が必要。拡張子なしだと ``Invalid value for <>`` エラーになる。
 
 サーバーコンソール（RCON 接続元）は **プレイヤーではなく `Server`** なので、`//paste` の基準点を **`//pos1`** で明示する必要がある点に注意。WorldEdit のバージョンによっては `//paste -ao <x> <y> <z>` 形式の方が安定することがあるため、初回統合時に [minecraft/README.md](../minecraft/README.md) に **動作確認済みコマンドを固定**してください。
 

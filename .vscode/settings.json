@@ -1,0 +1,19 @@
+{
+  "remote.autoForwardPorts": true,
+  "remote.autoForwardPortsSource": "hybrid",
+  "remote.portsAttributes": {
+    "8501": {
+      "label": "Bananacraft UI",
+      "onAutoForward": "notify"
+    },
+    "28888": {
+      "label": "Minecraft"
+    },
+    "28889": {
+      "label": "RCON"
+    },
+    "8100": {
+      "label": "BlueMap"
+    }
+  }
+}

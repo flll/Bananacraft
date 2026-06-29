@@ -50,10 +50,9 @@ make down     # すべて停止
 ```
 //world world
 //pos1 <ox>,<oy>,<oz>
-//pos2 <ox>,<oy>,<oz>
-//schem load building_<id>
+//schem load building_<id>.schem
 //paste -a
-say Bananacraft: pasted building_<id> at <ox>,<oy>,<oz> (world=world)
+say Bananacraft: pasted building_<id>.schem at <ox>,<oy>,<oz> (world=world)
 ```
 
 サーバーコンソール (RCON) は WorldEdit のセッションを持たないので、**毎回 `//world <name>` でワールドを明示する必要があります**。`world` 以外のワールド名を使っているサーバーは `.env` の `BANANACRAFT_MC_WORLD` を書き換えてください。
