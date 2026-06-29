@@ -11,6 +11,11 @@ venv/
 
 # Environment
 .env
+**/secret.env
+.cursor/secrets/
+*credentials*.json
+*gcp-sa.json
+.cursorsecretsgcp-sa.json
 
 # Node.js
 node_modules/
