@@ -2,6 +2,9 @@
 
 本書はコードベース上の責務分担・データの流れ・改修時の着手点をまとめたものです。背景やプロダクト思想は [Zenn: Bananacraft の記事](https://zenn.dev/nakaniship/articles/9f6eb4b7f8a44e) を参照してください（本書はその「実装マップ」役）。
 
+> **North Star（競合・ロードマップ）**  
+> [NORTH_STAR.md](./NORTH_STAR.md) — Bloxelizer / Higgsfield を常時参照。Skill: `bananacraft-north-star`
+
 > **Tripo / Minecraft ノウハウ**  
 > [TRIPO_MINECRAFT.md](./TRIPO_MINECRAFT.md) — Path A/B 比較、block_size、トラブルシュート。
 
