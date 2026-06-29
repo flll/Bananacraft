@@ -27,6 +27,7 @@ from v2.schem_preview import (
     schem_size_mismatch,
     schem_summary,
 )
+from v2.schem_writer import assigned_blocks_to_dicts, write_schem_from_blocks
 from v2.texture_atlas import get_or_build_atlas_png
 from v2.voxel_glb_builder import build_voxel_glb
 from voxelizer.block_assigner import BlockAtlas
@@ -68,10 +69,14 @@ def _blocks_cache_key(blocks: List[Dict[str, Any]]) -> tuple:
 
 
 @st.cache_data(show_spinner="schem を解析中...")
-def _load_schem_blocks_cached(schem_path: str, mtime: float) -> List[Dict[str, Any]]:
+def _load_schem_blocks_cached(
+    schem_path: str,
+    mtime: float,
+    y_layer: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     """``.schem`` を blocks 列に変換（ファイル mtime でキャッシュ無効化）。"""
     del mtime  # cache key only
-    return parse_schem_blocks(schem_path)
+    return parse_schem_blocks(schem_path, y_layer=y_layer)
 
 
 @st.cache_data(show_spinner=False)
@@ -144,7 +149,19 @@ def _render_schem_preview(
     try:
         mtime = os.path.getmtime(schem_path)
         summary = _load_schem_summary_cached(schem_path, mtime)
-        blocks = _load_schem_blocks_cached(schem_path, mtime)
+        h = int(summary["height"])
+        layer_default = max(h - 1, 0)
+        y_layer = st.slider(
+            "Y レイヤ（上面から断面）",
+            min_value=0,
+            max_value=layer_default,
+            value=layer_default,
+            key=f"schem_y_layer_{zone_id}",
+            help="Bloxelizer Voxelizer のレイヤ閲覧に相当。選択した Y 層のブロックのみプレビューします。",
+        )
+        blocks = _load_schem_blocks_cached(schem_path, mtime, y_layer)
+        if h > 1:
+            st.caption(f"レイヤ **Y={y_layer}** / 0–{layer_default} · 表示ブロック **{len(blocks):,}** 個")
     except SchemPreviewError as e:
         st.warning(f"schem プレビューを表示できません: {e}")
         return
@@ -667,6 +684,104 @@ def _section_design(zone: dict) -> bool:
     return has_str
 
 
+def _render_dropin_import(zone: dict, fm) -> None:
+    """Bloxelizer 相当: schem / 画像 / GLB のドロップイン取り込み。"""
+    zone_id = zone["id"]
+    schem_file = f"building_{zone_id}.schem"
+    blocks_file = f"building_{zone_id}_blocks_v2.json"
+    glb_import = f"building_{zone_id}_imported.glb"
+
+    with st.expander("📥 ドロップイン import（Bloxelizer 相当）", expanded=False):
+        st.caption(
+            "`.schem` を WorldEdit 用に取り込む · 画像を Structure 入力にする · "
+            "`.glb` をローカルボクセル化して `.schem` を生成（ObjToSchematic 的 Size 制御）"
+        )
+        uploaded = st.file_uploader(
+            "ファイル",
+            type=["schem", "png", "jpg", "jpeg", "glb"],
+            key=f"bnn_dropin_{zone_id}",
+        )
+        if not uploaded:
+            return
+
+        raw = uploaded.getvalue()
+        size_kb = round(len(raw) / 1024, 1)
+        name = (uploaded.name or "upload").lower()
+
+        if name.endswith(".schem"):
+            fm.save_image(schem_file, raw)
+            fm.save_json(
+                f"building_{zone_id}_schem_meta.json",
+                {
+                    "source": "dropin_upload",
+                    "filename": uploaded.name,
+                    "size_kb": size_kb,
+                },
+            )
+            st.success(f"`.schem` を `{schem_file}` に保存しました（{size_kb} KB）", icon="📦")
+            st.rerun()
+            return
+
+        if name.endswith((".png", ".jpg", ".jpeg")):
+            save_name = f"design_{zone_id}_structure.jpg"
+            fm.save_image(save_name, raw)
+            path = fm.get_path(save_name)
+            di = st.session_state.design_images or {}
+            di["structure"] = path
+            st.session_state.design_images = di
+            st.success(f"Structure 画像として保存（{size_kb} KB）", icon="🖼️")
+            st.caption("Blueprint の「ブループリントを作成」から Tripo に渡せます。")
+            return
+
+        if not name.endswith(".glb"):
+            st.warning("未対応の拡張子です。")
+            return
+
+        fm.save_image(glb_import, raw)
+        st.info(f"GLB を保存しました（{size_kb} KB）", icon="🗿")
+        pos = zone.get("position") or {}
+        target = max(int(pos.get("width") or 32), int(pos.get("depth") or 32))
+        st.caption(f"ボクセル化サイズ: ゾーン最長辺 **{target}** ブロック（Constraint axis=Y）")
+
+        if secondary_button(
+            "🧊 GLB → ボクセル → .schem（Path B）",
+            key=f"bnn_glb_voxel_{zone_id}",
+        ):
+            try:
+                from advanced_voxelizer import VoxelizerConfig, voxelize_and_assign
+            except ImportError:
+                from app.advanced_voxelizer import VoxelizerConfig, voxelize_and_assign
+
+            glb_path = fm.get_path(glb_import)
+            try:
+                with PipelineStatus(
+                    "GLB をボクセル化して .schem に変換中…", expanded=True,
+                ) as p:
+                    p.write(f"target_size={target}, constraint_axis=Y")
+                    cfg = VoxelizerConfig(target_size=target, constraint_axis="y")
+                    assigned = voxelize_and_assign(glb_path, cfg)
+                    p.step("`.schem` 書き出し")
+                    block_dicts = assigned_blocks_to_dicts(assigned)
+                    write_schem_from_blocks(block_dicts, fm.get_path(schem_file))
+                    fm.save_json(
+                        f"building_{zone_id}_schem_meta.json",
+                        {
+                            "source": "glb_voxelize_path_b",
+                            "glb": glb_import,
+                            "target_size": target,
+                            "block_count": len(block_dicts),
+                        },
+                    )
+                    fm.save_json(blocks_file, block_dicts)
+                st.success(
+                    f"`.schem` を生成しました（{len(block_dicts):,} blocks）",
+                    icon="✅",
+                )
+                st.rerun()
+            except Exception as e:  # noqa: BLE001
+                st.error(f"GLB ボクセル化に失敗: {e}")
+
+
 def _section_blueprint(zone: dict, design_done: bool) -> bool:
     fm = st.session_state.file_manager
     zone_id = zone["id"]
@@ -679,6 +794,8 @@ def _section_blueprint(zone: dict, design_done: bool) -> bool:
         " さらに Gemini で窓・ドア等のセマンティック要素を補完します。"
         " Tripo が `.schem` を返した場合は WorldEdit 用にそのまま保存し、設置経路として優先します。"
     )
+
+    _render_dropin_import(zone, fm)
 
     if not design_done:
         st.info("先に Design ステップを完了してください。", icon="🔒")

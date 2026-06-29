@@ -90,6 +90,7 @@ def parse_schem_blocks(
     *,
     skip_air: bool = True,
     max_blocks: Optional[int] = None,
+    y_layer: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Sponge v2 ``.schem`` を ``blocks_v2`` 互換の dict 列に変換する。
 
@@ -115,6 +116,8 @@ def parse_schem_blocks(
             for x in range(width):
                 block_type = palette.get(indices[idx], "minecraft:air")
                 idx += 1
+                if y_layer is not None and y != y_layer:
+                    continue
                 if skip_air and _is_air(block_type):
                     continue
                 blocks.append({"x": x, "y": y, "z": z, "type": block_type})

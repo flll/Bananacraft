@@ -13,20 +13,21 @@ North Star: [NORTH_STAR.md](./NORTH_STAR.md) | ベンチマーク: [COMPETITOR_B
 
 ---
 
-## Phase 1 — Bloxelizer parity（変換・編集）
+## Phase 1 — Bloxelizer parity（変換・編集）— 2026-06 一部完了
 
 **目標:** ブラウザ内で変換・プレビュー・配置まで 1 フロー。
 
-| タスク | 関連コード |
-|--------|------------|
-| schem プレビュー強化（レイヤ、パレット） | `app/v2/schem_preview.py`, `block_texture_resolver.py` |
-| GLB/PNG/schem ドロップイン import | `app/pages_v2/building.py` |
-| `.litematic` export 調査 | 新規 or ライブラリ選定 |
+| タスク | 状態 |
+|--------|------|
+| schem プレビュー強化（Y レイヤスライス、ゾーン警告） | 完了 |
+| GLB/PNG/schem ドロップイン import | 完了 |
+| GLB → ボクセル → `.schem`（Path B、Size=ゾーン最長辺） | 完了 |
+| `.litematic` export | 未着手（調査のみ） |
 
 **成功条件（Karpathy §4）:**
 
-- サンプル GLB → UI schem 化 → プレビュー → RCON paste
-- ゾーンサイズ誤差 **1.5x 以内**
+- サンプル GLB → UI schem 化 → プレビュー → RCON paste（Build セクションから paste）
+- ゾーンサイズ誤差 **1.5x 以内** — Path B は Size 制御あり。Tripo Path A は警告表示まで
 
 ---
 

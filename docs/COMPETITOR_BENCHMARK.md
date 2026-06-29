@@ -16,8 +16,10 @@ North Star 概要: [NORTH_STAR.md](./NORTH_STAR.md)
 | PNG/JPEG → voxel art | Concept 画像 → Tripo | Partial |
 | `.schem` export | Path A stylize | Have |
 | `.litematic` / Bedrock | — | Missing |
-| レイヤスライス・編集 | `schem_preview.py` | Partial |
+| レイヤスライス・編集 | `schem_preview.py` Y スライダー | Have |
 | パレット swap / find-replace | — | Missing |
+| ドロップイン import | Blueprint `file_uploader` | Have |
+| GLB ローカルボクセル→schem | Path B + `schem_writer.py` | Have |
 | AI text/image 生成 | Tripo + Gemini | Partial |
 | OSM リアル地形 | — | Missing |
 | Skin → Statue | — | Missing |
@@ -29,7 +31,7 @@ North Star 概要: [NORTH_STAR.md](./NORTH_STAR.md)
 | プロンプト → 建築 | Tripo stylize → schem | Partial |
 | プロンプト → 画像 | Gemini concept | Partial |
 | プロンプト → 動画 | — | Missing |
-| Camera 参照画像 | concept 画像のみ | Partial |
+| Camera 参照画像 | concept + dropin 画像 | Partial |
 | Supercomputer 出力スロット UX | PipelineStatus | Partial |
 | Generation Archive | `projects/` ファイル | Partial |
 | Generate 前コスト表示 | — | Missing |

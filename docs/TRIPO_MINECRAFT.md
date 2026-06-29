@@ -121,10 +121,11 @@ Tripo stylize を通す限り **1:1 は保証されない**。
 | Tripo 設定 | `app/v2/tripo_config.py` |
 | image_to_model + stylize | `app/v2/mesh_architect.py`, `app/tripo_client.py` |
 | schem 配置 | `app/v2/schem_deploy.py` |
+| schem 書き出し（Path B ローカル） | `app/v2/schem_writer.py` |
 | schem プレビュー | `app/v2/schem_preview.py`, `app/v2/schem_glb_builder.py` |
 | テクスチャ解決 | `app/v2/block_texture_resolver.py` |
 | jar PNG | `app/v2/mc_assets.py` |
-| GLB ボクセル（Path B 相当） | `mesh_architect` GLB 経路 + `voxel_glb_builder.py` |
+| GLB ボクセル（Path B 相当） | `advanced_voxelizer` + `schem_writer`（UI ドロップイン） / `mesh_architect` GLB 経路 |
 
 ---
 
@@ -143,4 +144,5 @@ Tripo stylize を通す限り **1:1 は保証されない**。
 
 | 日付 | メモ |
 |------|------|
+| 2026-06-04 | Path B ローカル: Blueprint ドロップイン GLB → advanced_voxelizer → schem_writer |
 | 2026-05-20 | 初版。Path A/B 比較、block_size 逆転式、トラブルシュート |

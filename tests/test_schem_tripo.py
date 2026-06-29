@@ -41,6 +41,50 @@ class TestBlockTextureResolver(unittest.TestCase):
             self.assertTrue(face.is_file())
 
 
+class TestSchemWriterRoundtrip(unittest.TestCase):
+    def test_write_and_read_roundtrip(self):
+        import tempfile
+
+        from v2.schem_preview import parse_schem_blocks, schem_dimensions
+        from v2.schem_writer import write_schem_from_blocks
+
+        blocks = [
+            {"x": 0, "y": 0, "z": 0, "type": "minecraft:stone"},
+            {"x": 1, "y": 0, "z": 0, "type": "minecraft:oak_planks"},
+            {"x": 0, "y": 1, "z": 0, "type": "minecraft:glass"},
+        ]
+        with tempfile.NamedTemporaryFile(suffix=".schem", delete=False) as tmp:
+            path = tmp.name
+        try:
+            write_schem_from_blocks(blocks, path)
+            w, h, l = schem_dimensions(path)
+            self.assertEqual((w, h, l), (2, 2, 1))
+            loaded = parse_schem_blocks(path)
+            self.assertEqual(len(loaded), 3)
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+    def test_y_layer_filter(self):
+        import tempfile
+
+        from v2.schem_preview import parse_schem_blocks
+        from v2.schem_writer import write_schem_from_blocks
+
+        blocks = [
+            {"x": 0, "y": 0, "z": 0, "type": "minecraft:stone"},
+            {"x": 0, "y": 1, "z": 0, "type": "minecraft:dirt"},
+        ]
+        with tempfile.NamedTemporaryFile(suffix=".schem", delete=False) as tmp:
+            path = tmp.name
+        try:
+            write_schem_from_blocks(blocks, path)
+            layer0 = parse_schem_blocks(path, y_layer=0)
+            self.assertEqual(len(layer0), 1)
+            self.assertEqual(layer0[0]["type"], "minecraft:stone")
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+
 class TestSchemGlbBuilder(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
