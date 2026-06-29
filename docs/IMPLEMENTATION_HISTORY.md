@@ -55,6 +55,7 @@
 | 分類 | Bloxelizer + Higgsfield + 独自 |
 | 機能 | 下表参照 |
 | ドキュメント | 本ファイル、`docs/LITEMATIC_EXPORT.md`、`docs/PHASE4_MOD_BRIDGE.md`、ROADMAP / BENCHMARK / KNOWN_CHALLENGES 更新 |
+| コミット | `3d75d43`（push なし） |
 
 ### 実装一覧
 
