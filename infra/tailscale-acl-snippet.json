@@ -1,5 +1,17 @@
 {
   "tagOwners": {
-    "tag:bananacraft": ["autogroup:admin"]
-  }
+    "tag:bananacraft": ["group:admin"]
+  },
+  "grants": [
+    {
+      "src": ["group:admin"],
+      "dst": ["tag:bananacraft"],
+      "ip": ["*"]
+    },
+    {
+      "src": ["tag:server", "lll-legacy"],
+      "dst": ["tag:bananacraft"],
+      "ip": ["*"]
+    }
+  ]
 }

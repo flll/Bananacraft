@@ -96,3 +96,4 @@
 |------|------|
 | 2026-06-04 | 初版作成（Phase 0–3 バッチ記録） |
 | 2026-06-04 | Phase 2–3 実装完了: Camera, Archive 適用/再配置, schem 編集, Mineflayer schem, litematic, mesh_architect 自動リサイズ |
+| 2026-06-04 | `origin/main` push（`fd27ae9` まで）。Tailscale ACL に `tag:server`/`lll-legacy` → `tag:bananacraft` grants を API 適用し tailnet から UI HTTP 200 を確認 |
