@@ -1,0 +1,10 @@
+# Bananacraft インフラ設定（非機密）
+gcp:
+  project_id: lll-fish
+  secret_name: cursor-secret
+  # Secret Manager リージョンは replication-policy=automatic（マルチリージョン）
+
+skills:
+  repo: flll/skills
+  clone_path: ~/.cursor/skills-repo
+  # Cursor が読む: ~/.cursor/skills/<name>/ （make skills-sync で symlink）
